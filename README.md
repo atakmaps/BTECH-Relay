@@ -7,16 +7,19 @@ A free, open-source ATAK plugin that connects UV-PRO radios to the Android Team 
 | Feature | Status | Description |
 |---------|--------|-------------|
 | **Position Sharing (PLI)** | ✅ Working | Your ATAK position is beaconed over radio at a configurable interval. Incoming positions appear as contacts on the map. |
-| **GeoChat over RF (contact-centric)** | ✅ Working | Chat to radio peers using ATAK’s native Contacts/GeoChat UI (plugin contacts route via RF transport). |
-| **GeoChat delivery receipts (checkmarks)** | ✅ Working | ATAK’s native single-checkmark (delivered) and double-checkmark (read) appear on the sender’s chat window. The receiving device sends a delivered ACK when the message arrives over RF, and a read ACK when the user opens the conversation. |
-| **Retry on no ACK + delivery failure alert** | ✅ Working | If the sender receives no delivered ACK within the configured interval (default 2 min), the message is retransmitted up to the configured maximum (default 3 attempts). If all retries are exhausted, a persistent alert dialog appears on the sender’s screen and must be acknowledged by tapping OK before it dismisses. Retry interval and max retries are adjustable in plugin Settings. |
-| **Contact-targeted CoT over RF (waypoints, routes, casevac, etc.)** | ✅ Working | Any CoT item sendable to a contact in ATAK — waypoints, routes, casevac/9-line, drawings, enemy/friendly markers — is intercepted, compressed, and relayed over RF to the target radio contact. Items exceeding 4 KB compressed are skipped with a log warning. |
-| **SA Relay (opt-in)** | 🔧 In Development | Network-to-radio bridge: broadcasts received SA (positions, waypoints, routes) over RF to radio-only users. Infrastructure implemented; UI pending field validation. |
-| **AES-256 Encryption** | ✅ Working | Optional shared-secret AES-256-GCM for all radio traffic (PBKDF2 key derivation, random salt per payload). All nodes must use the same secret. Encrypted links require **1.5.3+ on every radio**; mixed older builds cannot decrypt v3 envelopes. |
-| **Contact Tracking** | ✅ Working | Radios in range are tracked as contacts with callsign, last-seen time, and position. Contacts that go silent are aged out. |
+| **APRS Smart Beaconing** | ✅ Working | Dynamically adjusts beacon rate based on speed and heading change. Fast/turning = frequent beacons; slow/straight = less frequent. All six parameters configurable in Settings → Manage Smart Beacon Settings. |
+| **Ping Reply** | ✅ Working | Automatically replies to incoming pings with your current GPS position. Toggle on/off in Settings. |
+| **Bluetooth Scan & Connect** | ✅ Working | Instant picker showing previously-connected radios with live green/gray availability dots. Auto-connects to last used radio on ATAK startup. |
+| **Radio Connection Status Overlay** | ✅ Working | Persistent icon in the lower-right ATAK map corner showing connection state. Green box = connected; dark box = disconnected. |
+| **GeoChat over RF (contact-centric)** | ✅ Working | Chat to radio peers using ATAK's native Contacts/GeoChat UI (plugin contacts route via RF transport). |
+| **GeoChat delivery receipts (checkmarks)** | ✅ Working | ATAK's native single-checkmark (delivered) and double-checkmark (read) appear on the sender's chat window. |
+| **Retry on no ACK + delivery failure alert** | ✅ Working | If no delivered ACK within the configured interval, message is retransmitted up to max retries. If all retries exhausted, a persistent alert appears. Retry interval and max retries adjustable in Settings. |
+| **Contact-targeted CoT over RF** | ✅ Working | Any CoT item sendable to a contact in ATAK — waypoints, routes, casevac/9-line, drawings, markers — is intercepted, compressed, and relayed over RF. |
+| **SA Relay (opt-in)** | ✅ Working | Network-to-radio bridge: broadcasts received SA over RF to radio-only users. Configurable in Settings. |
+| **AES-256 Encryption** | ✅ Working | Optional shared-secret AES-256-GCM for all radio traffic. All nodes must use the same secret. |
+| **Contact Tracking** | ✅ Working | Radios in range tracked as contacts with callsign, last-seen time, and position. |
 | **Bluetooth Auto-Reconnect** | ✅ Working | Three-strategy SPP connection with exponential backoff reconnect (up to 5 attempts). |
 | **Send Ping** | ✅ Working | Lightweight keepalive — lets other nodes know you're active even without GPS. |
-
 ## How It Works
 
 ```

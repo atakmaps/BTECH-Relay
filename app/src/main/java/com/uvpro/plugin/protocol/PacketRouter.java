@@ -177,12 +177,12 @@ public class PacketRouter {
                         java.nio.charset.StandardCharsets.US_ASCII).trim();
                 Log.d(TAG, "Ping from: " + pingCall);
                 contactTracker.handlePing(pingCall);
-                // Use the AX.25 source callsign (full name) so it matches the contact UID key
-                // that was registered from GPS beacons. The payload callsign may be vowel-stripped.
                 chatBridge.onPeerActivity(callsign);
                 if (!callsign.equalsIgnoreCase(pingCall)) {
-                    chatBridge.onPeerActivity(pingCall); // also try stripped form for safety
+                    chatBridge.onPeerActivity(pingCall);
                 }
+                // Send ping reply if enabled
+                sendPingReply();
                 break;
 
             case UVProPacket.TYPE_ACK:
@@ -333,6 +333,30 @@ public class PacketRouter {
             contacts.addContact(c);
         } catch (Exception e) {
             Log.e(TAG, "linkRadioIndividualContactToMapMarker failed uid=" + uid, e);
+        }
+    }
+
+    /** Send our current GPS position as a ping reply if the setting is enabled. */
+    private void sendPingReply() {
+        try {
+            MapView mv = MapView.getMapView();
+            if (mv == null) return;
+            if (!com.uvpro.plugin.ui.SettingsFragment.isPingReplyEnabled(mv.getContext())) return;
+
+            com.atakmap.android.maps.PointMapItem self = mv.getSelfMarker();
+            if (self == null) return;
+
+            com.atakmap.coremap.maps.coords.GeoPoint gp = self.getPoint();
+            double speedMs = 0.0, course = 0.0;
+            try { speedMs = Double.parseDouble(self.getMetaString("Speed",  "0")); } catch (Exception ignored) {}
+            try { course  = Double.parseDouble(self.getMetaString("course", "0")); } catch (Exception ignored) {}
+
+            cotBridge.sendPositionOverRadio(
+                    gp.getLatitude(), gp.getLongitude(),
+                    gp.getAltitude(), (float) speedMs, (float) course, -1);
+            Log.d(TAG, "Ping reply sent");
+        } catch (Exception e) {
+            Log.w(TAG, "sendPingReply failed: " + e.getMessage());
         }
     }
 }

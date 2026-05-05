@@ -8,6 +8,7 @@ import android.util.Log;
 
 import com.atakmap.android.dropdown.DropDownMapComponent;
 import com.atakmap.android.ipc.AtakBroadcast;
+import com.uvpro.plugin.beacon.SmartBeacon;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.coremap.maps.coords.GeoPoint;
@@ -54,6 +55,7 @@ public class UVProMapComponent extends DropDownMapComponent {
     private Handler beaconHandler;
     private Runnable beaconRunnable;
     private android.content.BroadcastReceiver beaconIntervalReceiver;
+    private final SmartBeacon smartBeacon = new SmartBeacon();
 
     @Override
     public void onCreate(Context context, Intent intent, MapView view) {
@@ -153,6 +155,9 @@ try {
             @Override
             public void onDeviceFound(android.bluetooth.BluetoothDevice device) {}
         });
+
+        // Auto-connect to last used radio after a short delay (let BT stack settle)
+        view.postDelayed(() -> autoConnectLastRadio(context), 4000);
 
         // Wire BT manager into bridges so they can transmit
         cotBridge.setBtManager(btConnectionManager);
@@ -273,47 +278,83 @@ try {
         Log.i(TAG, "UV-PRO plugin shutdown complete");
     }
 
-    /**
-     * Start periodic GPS beacon broadcasts.
-     */
+    /** Auto-connect to the last used radio on startup if one is saved. */
+    private void autoConnectLastRadio(Context context) {
+        try {
+            String tgt = com.uvpro.plugin.bluetooth.BluetoothDeviceRegistry
+                    .getConnectTargetAddress(context);
+            if (tgt == null || tgt.isEmpty()) {
+                Log.d(TAG, "Auto-connect: no saved radio address");
+                return;
+            }
+            android.bluetooth.BluetoothAdapter adapter =
+                    android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            if (adapter == null || !adapter.isEnabled()) {
+                Log.d(TAG, "Auto-connect: Bluetooth not available");
+                return;
+            }
+            android.bluetooth.BluetoothDevice device = adapter.getRemoteDevice(tgt);
+            Log.i(TAG, "Auto-connecting to last radio: " + tgt);
+            btConnectionManager.connect(device);
+        } catch (Exception e) {
+            Log.w(TAG, "Auto-connect failed: " + e.getMessage());
+        }
+    }
+
+    /** Start periodic GPS beacon broadcasts. */
     private void startBeaconTimer() {
-        // Defensive: ensure we don't accidentally run multiple timers if the
-        // component is re-created without a clean destroy (can happen in ATAK).
         if (beaconHandler != null && beaconRunnable != null) {
             beaconHandler.removeCallbacks(beaconRunnable);
         }
+        smartBeacon.reset();
 
         beaconHandler = new Handler(Looper.getMainLooper());
         beaconRunnable = new Runnable() {
             @Override
             public void run() {
                 sendBeaconIfConnected();
-                int intervalSec = SettingsFragment.getBeaconIntervalSec(
-                        pluginContext);
-                if (intervalSec < 1) intervalSec = 1;
-                beaconHandler.postDelayed(this, intervalSec * 1000L);
+                // Smart beacon: check every 10s. Fixed: check at interval.
+                long nextCheckMs;
+                if (SmartBeacon.isEnabled(pluginContext)) {
+                    nextCheckMs = 10_000L; // poll every 10s; algorithm decides when to actually send
+                } else {
+                    int intervalSec = SettingsFragment.getBeaconIntervalSec(pluginContext);
+                    if (intervalSec < 1) intervalSec = 1;
+                    nextCheckMs = intervalSec * 1000L;
+                }
+                beaconHandler.postDelayed(this, nextCheckMs);
             }
         };
-        int initialDelay = 30_000; // always send first beacon 30s after startup/reconnect
-        if (initialDelay < 1000) initialDelay = 1000;
-        beaconHandler.postDelayed(beaconRunnable, initialDelay);
+        beaconHandler.postDelayed(beaconRunnable, 30_000L);
     }
 
     private void sendBeaconIfConnected() {
-        if (btConnectionManager == null || !btConnectionManager.isConnected()) {
-            return;
-        }
+        if (btConnectionManager == null || !btConnectionManager.isConnected()) return;
         if (cotBridge == null || mapView == null) return;
 
         try {
-            PointMapItem self = mapView.getSelfMarker();
-            if (self != null) {
-                GeoPoint gp = self.getPoint();
-                cotBridge.sendPositionOverRadio(
-                        gp.getLatitude(), gp.getLongitude(),
-                        gp.getAltitude(), 0, 0, -1);
-                Log.d(TAG, "Periodic beacon sent");
+            com.atakmap.android.maps.PointMapItem self = mapView.getSelfMarker();
+            if (self == null) return;
+
+            com.atakmap.coremap.maps.coords.GeoPoint gp = self.getPoint();
+
+            // Speed (m/s) and course (degrees) — use getMetaString for broad SDK compat
+            double speedMs = 0.0, course = 0.0;
+            try { speedMs = Double.parseDouble(self.getMetaString("Speed",  "0")); } catch (Exception ignored) {}
+            try { course  = Double.parseDouble(self.getMetaString("course", "0")); } catch (Exception ignored) {}
+            double speedMph = speedMs * 2.23694;
+
+            if (SmartBeacon.isEnabled(pluginContext)) {
+                if (!smartBeacon.shouldBeacon(pluginContext, speedMph, course)) return;
+                smartBeacon.recordBeacon(course);
+                Log.d(TAG, "Smart beacon fired (speed=" + String.format("%.1f", speedMph)
+                        + "mph, course=" + String.format("%.0f", course) + "°)");
             }
+
+            cotBridge.sendPositionOverRadio(
+                    gp.getLatitude(), gp.getLongitude(),
+                    gp.getAltitude(), (float) speedMs, (float) course, -1);
+            Log.d(TAG, "Periodic beacon sent");
         } catch (Exception e) {
             Log.e(TAG, "Error sending periodic beacon", e);
         }

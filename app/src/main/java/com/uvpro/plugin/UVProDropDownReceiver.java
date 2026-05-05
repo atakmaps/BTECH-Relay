@@ -746,35 +746,66 @@ public class UVProDropDownReceiver extends DropDownReceiver
         divider.setText(" ");
         layout.addView(divider);
 
-        // SA Relay (same pref as Tools → UV-PRO Settings → preferences.xml)
-        TextView labelSaRelay = new TextView(ctx);
-        labelSaRelay.setText("SA Relay");
-        labelSaRelay.setTextColor(0xFFFFFFFF);
-        labelSaRelay.setTextSize(16);
-        layout.addView(labelSaRelay);
-        Switch switchSaRelay = new Switch(ctx);
-        switchSaRelay.setText("Re-broadcast TAK network positions over radio");
-        switchSaRelay.setTextColor(0xFFCCCCCC);
-        switchSaRelay.setChecked(SettingsFragment.isSaRelayEnabled(ctx));
-        layout.addView(switchSaRelay);
+        // Smart Beacon toggle
+        android.widget.LinearLayout rowSmartBeacon = new android.widget.LinearLayout(ctx);
+        rowSmartBeacon.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        rowSmartBeacon.setPadding(0, 20, 0, 4);
 
-        TextView hintSaRelay = new TextView(ctx);
-        hintSaRelay.setText(
-                "Throttled: one update per contact per 30 s. Requires TAK server + radio connected.");
-        hintSaRelay.setTextColor(0xFF888888);
-        hintSaRelay.setTextSize(12);
-        layout.addView(hintSaRelay);
+        TextView labelSmartBeacon = new TextView(ctx);
+        labelSmartBeacon.setText("Smart Beacon");
+        labelSmartBeacon.setTextColor(0xFFFFFFFF);
+        labelSmartBeacon.setTextSize(15);
+        LinearLayout.LayoutParams sbLabelParams = new LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        labelSmartBeacon.setLayoutParams(sbLabelParams);
+        rowSmartBeacon.addView(labelSmartBeacon);
 
-        // Beacon interval field
+        android.widget.Switch switchSmartBeacon = new android.widget.Switch(ctx);
+        boolean smartBeaconOn = com.uvpro.plugin.beacon.SmartBeacon.isEnabled(ctx);
+        switchSmartBeacon.setChecked(smartBeaconOn);
+        rowSmartBeacon.addView(switchSmartBeacon);
+        layout.addView(rowSmartBeacon);
+
+        TextView hintSmartBeacon = new TextView(ctx);
+        hintSmartBeacon.setText("Adapts beacon rate to speed and heading changes.");
+        hintSmartBeacon.setTextColor(0xFFAAAAAA);
+        hintSmartBeacon.setTextSize(11);
+        layout.addView(hintSmartBeacon);
+
+        // Manage Smart Beacon Settings button
+        android.widget.Button btnSmartBeaconSettings = new android.widget.Button(ctx);
+        btnSmartBeaconSettings.setText("Manage Smart Beacon Settings");
+        btnSmartBeaconSettings.setOnClickListener(v ->
+                com.uvpro.plugin.beacon.SmartBeaconSettingsDialog.show(ctx, null));
+        layout.addView(btnSmartBeaconSettings);
+
+        // Beacon interval field (greyed out when smart beacon is on)
         TextView labelBeacon = new TextView(ctx);
         labelBeacon.setText("\nGPS Beacon Interval (seconds)");
-        labelBeacon.setTextColor(0xFFAAAAAA);
+        labelBeacon.setTextColor(smartBeaconOn ? 0xFF666666 : 0xFFAAAAAA);
         layout.addView(labelBeacon);
         EditText editBeacon = new EditText(ctx);
         editBeacon.setText(prefs.getString(SettingsFragment.PREF_BEACON_INTERVAL,
                 SettingsFragment.DEFAULT_BEACON_INTERVAL));
         editBeacon.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        editBeacon.setEnabled(!smartBeaconOn);
+        editBeacon.setAlpha(smartBeaconOn ? 0.35f : 1.0f);
         layout.addView(editBeacon);
+
+        // Toggle beacon interval enabled/greyed based on switch
+        switchSmartBeacon.setOnCheckedChangeListener((btn, checked) -> {
+            editBeacon.setEnabled(!checked);
+            editBeacon.setAlpha(checked ? 0.35f : 1.0f);
+            labelBeacon.setTextColor(checked ? 0xFF666666 : 0xFFAAAAAA);
+        });
+
+        // Section header
+        TextView headerMessaging = new TextView(ctx);
+        headerMessaging.setText("Send messages or other ATAK data options");
+        headerMessaging.setTextColor(0xFFFFFFFF);
+        headerMessaging.setTextSize(15);
+        headerMessaging.setPadding(0, 28, 0, 4);
+        layout.addView(headerMessaging);
 
         // Retry interval field
         TextView labelRetryInterval = new TextView(ctx);
@@ -798,6 +829,37 @@ public class UVProDropDownReceiver extends DropDownReceiver
         editRetryMax.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
         layout.addView(editRetryMax);
 
+        // Ping Reply
+        Switch switchPingReply = new Switch(ctx);
+        switchPingReply.setText("Send Ping Reply");
+        switchPingReply.setTextColor(0xFFCCCCCC);
+        switchPingReply.setChecked(SettingsFragment.isPingReplyEnabled(ctx));
+        layout.addView(switchPingReply);
+
+        TextView hintPingReply = new TextView(ctx);
+        hintPingReply.setText("Automatically reply to incoming pings with your position.");
+        hintPingReply.setTextColor(0xFF888888);
+        hintPingReply.setTextSize(12);
+        layout.addView(hintPingReply);
+
+        // SA Relay — moved to bottom
+        TextView labelSaRelay = new TextView(ctx);        labelSaRelay.setText("\nSA Relay");
+        labelSaRelay.setTextColor(0xFFFFFFFF);
+        labelSaRelay.setTextSize(16);
+        layout.addView(labelSaRelay);
+        Switch switchSaRelay = new Switch(ctx);
+        switchSaRelay.setText("Re-broadcast TAK network positions over radio");
+        switchSaRelay.setTextColor(0xFFCCCCCC);
+        switchSaRelay.setChecked(SettingsFragment.isSaRelayEnabled(ctx));
+        layout.addView(switchSaRelay);
+
+        TextView hintSaRelay = new TextView(ctx);
+        hintSaRelay.setText(
+                "Throttled: one update per contact per 30 s. Requires TAK server + radio connected.");
+        hintSaRelay.setTextColor(0xFF888888);
+        hintSaRelay.setTextSize(12);
+        layout.addView(hintSaRelay);
+
         // Team color is controlled by ATAK core settings (locationTeam). Plugin no longer overrides it.
 
         scrollView.addView(layout);
@@ -809,6 +871,10 @@ public class UVProDropDownReceiver extends DropDownReceiver
                     SharedPreferences.Editor editor = prefs.edit();
                     editor.putBoolean(SettingsFragment.PREF_SA_RELAY_ENABLED,
                             switchSaRelay.isChecked());
+
+                    com.uvpro.plugin.beacon.SmartBeacon.setEnabled(ctx, switchSmartBeacon.isChecked());
+                    prefs.edit().putBoolean(SettingsFragment.PREF_PING_REPLY_ENABLED,
+                            switchPingReply.isChecked()).apply();
 
                     String newBeacon = editBeacon.getText().toString().trim();
                     if (!newBeacon.isEmpty()) {
