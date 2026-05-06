@@ -114,7 +114,12 @@ android {
     sourceSets {
         main {
             setProperty("archivesBaseName", "ATAK-Plugin-UVPro-" + PLUGIN_VERSION + "-" + pluginVcsLabel() + "-" + ATAK_VERSION)
-            defaultConfig.versionCode = getVersionCode()
+            // Derive a deterministic versionCode from PLUGIN_VERSION (e.g. "1.8.0" → 10800).
+            // This ensures the auto-update server can compare versions correctly regardless of
+            // whether the build has a git history (TPC builds do not).
+            def parts = PLUGIN_VERSION.tokenize('.')
+            def computedCode = (parts[0] as int) * 10000 + (parts[1] as int) * 100 + ((parts.size() > 2 ? parts[2] : "0") as int)
+            defaultConfig.versionCode = computedCode
             defaultConfig.versionName = PLUGIN_VERSION + " (" + pluginVcsLabel() + ") - [" + ATAK_VERSION + "]"
         }
         debug.setRoot('build-types/debug')
