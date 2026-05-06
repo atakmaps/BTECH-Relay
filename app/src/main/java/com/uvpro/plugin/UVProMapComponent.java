@@ -292,7 +292,7 @@ try {
             Context atakContext = com.atakmap.android.maps.MapView.getMapView().getContext();
             android.content.SharedPreferences prefs =
                     android.preference.PreferenceManager.getDefaultSharedPreferences(atakContext);
-            final String UPDATE_SERVER_URL = "http://31.220.30.74/plugins/product.infz";
+            final String UPDATE_SERVER_URL = "https://atakmaps.com/plugins/product.infz";
             final String PREF_URL         = "atakUpdateServerUrl";
             final String PREF_ENABLED     = "appMgmtEnableUpdateServer";
             final String PREF_AUTO_SYNC   = "app_mgmt_auto_sync";
