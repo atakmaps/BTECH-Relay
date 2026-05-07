@@ -349,17 +349,31 @@ try {
 
             // --- Step 2: Save directly to the ICertificateStore that CertificateManager._impl
             // holds — this is what getCACerts actually reads via validateCertificate().
-            // CertificateManager._impl.getCertificateStore() returns adapter.certDb; however
-            // if initialization order meant _impl was created before the DB was open, the two
-            // references diverge. Writing to both guarantees coverage.
+            // ProGuard renames CertificateManager to a short class (e.g. com.atakmap.net.l),
+            // so find getInstance() by: static, no params, returns same class type.
             Class<?> certMgrClass = Class.forName("com.atakmap.net.CertificateManager");
-            java.lang.reflect.Method getInst = certMgrClass.getDeclaredMethod("getInstance");
-            getInst.setAccessible(true);
-            Object certMgr = getInst.invoke(null);
+            java.lang.reflect.Method getInst = null;
+            for (java.lang.reflect.Method m : certMgrClass.getDeclaredMethods()) {
+                if (java.lang.reflect.Modifier.isStatic(m.getModifiers())
+                        && m.getParameterTypes().length == 0
+                        && certMgrClass.isAssignableFrom(m.getReturnType())) {
+                    getInst = m;
+                    getInst.setAccessible(true);
+                    break;
+                }
+            }
+            Object certMgr = (getInst != null) ? getInst.invoke(null) : null;
 
-            java.lang.reflect.Field implField = certMgrClass.getDeclaredField("_impl");
-            implField.setAccessible(true);
-            Object impl = implField.get(certMgr);
+            java.lang.reflect.Field implField = null;
+            for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(f.getModifiers())
+                        && f.getType().getName().contains("CertificateManager")) {
+                    implField = f;
+                    implField.setAccessible(true);
+                    break;
+                }
+            }
+            Object impl = (certMgr != null && implField != null) ? implField.get(certMgr) : null;
 
             if (impl != null) {
                 java.lang.reflect.Method getCertStore = impl.getClass().getMethod("getCertificateStore");
@@ -380,7 +394,7 @@ try {
                     Log.w(TAG, "registerUpdateServerCA: liveStore is null");
                 }
             } else {
-                Log.w(TAG, "registerUpdateServerCA: _impl is null");
+                Log.w(TAG, "registerUpdateServerCA: _impl is null (getInst=" + getInst + ")");
             }
 
             // --- Step 3: Store the password so getCACerts passes the !isEmpty check ---
@@ -391,9 +405,23 @@ try {
             // socketFactories is a ConcurrentHashMap cache keyed by server URL.
             // If a factory was built before our cert was saved it would never see the cert.
             // refresh() calls socketFactories.clear() so the next sync builds a fresh factory.
-            java.lang.reflect.Method refresh = certMgrClass.getDeclaredMethod("refresh");
-            refresh.invoke(certMgr);
-            Log.i(TAG, "registerUpdateServerCA: factory cache refreshed");
+            if (certMgr != null) {
+                java.lang.reflect.Method refresh = null;
+                for (java.lang.reflect.Method m : certMgrClass.getDeclaredMethods()) {
+                    if (!java.lang.reflect.Modifier.isStatic(m.getModifiers())
+                            && m.getParameterTypes().length == 0
+                            && m.getReturnType() == void.class
+                            && m.getName().equals("refresh")) {
+                        refresh = m;
+                        refresh.setAccessible(true);
+                        break;
+                    }
+                }
+                if (refresh != null) {
+                    refresh.invoke(certMgr);
+                    Log.i(TAG, "registerUpdateServerCA: factory cache refreshed");
+                }
+            }
 
             Log.i(TAG, "Update server CA registered successfully");
         } catch (Exception e) {
