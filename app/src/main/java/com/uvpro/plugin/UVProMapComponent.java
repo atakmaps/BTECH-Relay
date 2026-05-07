@@ -298,7 +298,7 @@ try {
             final String PREF_AUTO_SYNC   = "app_mgmt_auto_sync";
 
             String existing = prefs.getString(PREF_URL, "");
-            if (UPDATE_SERVER_URL.equals(existing)) return; // already configured
+            if (existing.contains("atakmaps.com")) return; // already pointing at our server
 
             prefs.edit()
                     .putString(PREF_URL,        UPDATE_SERVER_URL)
