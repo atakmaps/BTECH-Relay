@@ -325,17 +325,29 @@ try {
             is.read(certBytes);
             is.close();
 
-            // Use reflection — AtakCertificateDatabaseBase is package-private but its
-            // static methods are accessible at runtime since the class IS on the classpath.
+            // AtakCertificateDatabaseBase is accessible by class name but its methods are
+            // renamed by ProGuard in the production ATAK APK. Find saveCertificate(String, byte[])
+            // by parameter signature — it is the only static method with that exact signature.
             Class<?> certDb = Class.forName("com.atakmap.net.AtakCertificateDatabaseBase");
-
-            java.lang.reflect.Method saveCert = certDb.getMethod("saveCertificate",
-                    String.class, byte[].class);
+            java.lang.reflect.Method saveCert = null;
+            for (java.lang.reflect.Method m : certDb.getDeclaredMethods()) {
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length == 2 && p[0] == String.class && p[1] == byte[].class) {
+                    saveCert = m;
+                    saveCert.setAccessible(true);
+                    break;
+                }
+            }
+            if (saveCert == null) {
+                Log.w(TAG, "registerUpdateServerCA: saveCertificate method not found");
+                return;
+            }
             saveCert.invoke(null, "UPDATE_SERVER_TRUST_STORE_CA", certBytes);
 
-            java.lang.reflect.Method savePass = certDb.getMethod("saveCertificatePassword",
-                    String.class, String.class, String.class);
-            savePass.invoke(null, "atakatak", "updateServerCaPassword", null);
+            // saveCertificatePassword is just a wrapper around AtakAuthenticationDatabase
+            // .saveCredentials — call the public API directly with username="" password="atakatak"
+            com.atakmap.net.AtakAuthenticationDatabase.saveCredentials(
+                    "updateServerCaPassword", "updateServerCaPassword", "", "atakatak", false);
 
             Log.i(TAG, "Update server CA registered successfully");
         } catch (Exception e) {
