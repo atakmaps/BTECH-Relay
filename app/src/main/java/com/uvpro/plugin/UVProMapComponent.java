@@ -298,16 +298,48 @@ try {
             final String PREF_AUTO_SYNC   = "app_mgmt_auto_sync";
 
             String existing = prefs.getString(PREF_URL, "");
-            if (existing.contains("atakmaps.com")) return; // already pointing at our server
+            if (!existing.contains("atakmaps.com")) {
+                prefs.edit()
+                        .putString(PREF_URL,        UPDATE_SERVER_URL)
+                        .putBoolean(PREF_ENABLED,   true)
+                        .putBoolean(PREF_AUTO_SYNC, true)
+                        .apply();
+                Log.i(TAG, "Plugin update server configured: " + UPDATE_SERVER_URL);
+            }
 
-            prefs.edit()
-                    .putString(PREF_URL,        UPDATE_SERVER_URL)
-                    .putBoolean(PREF_ENABLED,   true)
-                    .putBoolean(PREF_AUTO_SYNC, true)
-                    .apply();
-            Log.i(TAG, "Plugin update server configured: " + UPDATE_SERVER_URL);
+            // Register the Let's Encrypt CA so ATAK's custom SSL manager trusts atakmaps.com.
+            // ATAK's CertificateManagerBase requires a non-empty password entry for
+            // UPDATE_SERVER_TRUST_STORE_CA — the settings UI never stores one, so we do it here.
+            registerUpdateServerCA(context);
+
         } catch (Exception e) {
             Log.w(TAG, "configureUpdateServer failed: " + e.getMessage());
+        }
+    }
+
+    private void registerUpdateServerCA(Context context) {
+        try {
+            // Read bundled PKCS12 from plugin assets
+            java.io.InputStream is = context.getAssets().open("atakmaps-ca.p12");
+            byte[] certBytes = new byte[is.available()];
+            is.read(certBytes);
+            is.close();
+
+            // Use reflection — AtakCertificateDatabaseBase is package-private but its
+            // static methods are accessible at runtime since the class IS on the classpath.
+            Class<?> certDb = Class.forName("com.atakmap.net.AtakCertificateDatabaseBase");
+
+            java.lang.reflect.Method saveCert = certDb.getMethod("saveCertificate",
+                    String.class, byte[].class);
+            saveCert.invoke(null, "UPDATE_SERVER_TRUST_STORE_CA", certBytes);
+
+            java.lang.reflect.Method savePass = certDb.getMethod("saveCertificatePassword",
+                    String.class, String.class, String.class);
+            savePass.invoke(null, "atakatak", "updateServerCaPassword", null);
+
+            Log.i(TAG, "Update server CA registered successfully");
+        } catch (Exception e) {
+            Log.w(TAG, "registerUpdateServerCA failed: " + e.getMessage());
         }
     }
 
