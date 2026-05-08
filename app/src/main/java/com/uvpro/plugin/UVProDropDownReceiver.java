@@ -36,6 +36,7 @@ import com.uvpro.plugin.cot.CotBridge;
 import com.uvpro.plugin.crypto.EncryptionManager;
 import com.uvpro.plugin.protocol.PacketRouter;
 import com.uvpro.plugin.radio.UVProRadioControlManager;
+import com.uvpro.plugin.beacon.SmartBeacon;
 import com.uvpro.plugin.ui.SettingsFragment;
 
 import java.text.SimpleDateFormat;
@@ -83,7 +84,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private TextView logText;
     private TextView encryptionStatusText;
     private TextView beaconIntervalText;
-    private TextView saRelayStatusText;
     private TextView teamColorText;
     private Button btnScan;
     private Button btnDisconnect;
@@ -216,7 +216,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
         logText = rootView.findViewById(getId("text_log"));
         encryptionStatusText = rootView.findViewById(getId("text_encryption_status"));
         beaconIntervalText = rootView.findViewById(getId("text_beacon_interval"));
-        saRelayStatusText = rootView.findViewById(getId("text_sa_relay_status"));
         teamColorText = rootView.findViewById(getId("text_team_color"));
         btnScan = rootView.findViewById(getId("btn_scan"));
         btnDisconnect = rootView.findViewById(getId("btn_disconnect"));
@@ -586,17 +585,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
 
         updateEncryptionStatus();
 
-        // Beacon interval
-        int beaconSec = SettingsFragment.getBeaconIntervalSec(ctx);
-        if (beaconIntervalText != null) {
-            beaconIntervalText.setText(beaconSec + "s");
-        }
-
-        boolean saOn = SettingsFragment.isSaRelayEnabled(ctx);
-        if (saRelayStatusText != null) {
-            saRelayStatusText.setText(saOn ? "On" : "Off");
-            saRelayStatusText.setTextColor(saOn ? 0xFF4CAF50 : 0xFF888888);
-        }
+        refreshBeaconIntervalLabel(ctx);
 
         // Team color (ATAK preference)
         try {
@@ -606,6 +595,19 @@ public class UVProDropDownReceiver extends DropDownReceiver
             }
         } catch (Exception ignored) {
         }
+    }
+
+    /** Main panel: Smart Beacon ignores fixed interval — show \"Smart\" instead of e.g. 300s. */
+    private void refreshBeaconIntervalLabel(Context ctx) {
+        if (beaconIntervalText == null) return;
+        if (SmartBeacon.isEnabled(ctx)) {
+            beaconIntervalText.setText("Smart");
+            beaconIntervalText.setTextColor(0xFF00BCD4);
+            return;
+        }
+        int beaconSec = SettingsFragment.getBeaconIntervalSec(ctx);
+        beaconIntervalText.setText(beaconSec + "s");
+        beaconIntervalText.setTextColor(0xFF00BCD4);
     }
 
     private void updateEncryptionStatus() {
@@ -981,8 +983,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
                     String newBeacon = editBeacon.getText().toString().trim();
                     if (!newBeacon.isEmpty()) {
                         editor.putString(SettingsFragment.PREF_BEACON_INTERVAL, newBeacon);
-                        if (beaconIntervalText != null)
-                            beaconIntervalText.setText(newBeacon + "s");
                     }
 
                     String newRetryInterval = editRetryInterval.getText().toString().trim();
