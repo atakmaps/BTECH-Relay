@@ -20,6 +20,7 @@ import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.atakmap.android.dropdown.DropDown;
 import com.atakmap.android.dropdown.DropDownReceiver;
@@ -34,6 +35,7 @@ import com.uvpro.plugin.contacts.RadioContact;
 import com.uvpro.plugin.cot.CotBridge;
 import com.uvpro.plugin.crypto.EncryptionManager;
 import com.uvpro.plugin.protocol.PacketRouter;
+import com.uvpro.plugin.radio.UVProRadioControlManager;
 import com.uvpro.plugin.ui.SettingsFragment;
 
 import java.text.SimpleDateFormat;
@@ -85,6 +87,8 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private TextView teamColorText;
     private Button btnScan;
     private Button btnDisconnect;
+    private Button btnLoadSelectedRepeater;
+    private TextView selectedRepeaterText;
 
     private TextView favoritesLabel;
     private HorizontalScrollView favoritesScroll;
@@ -100,6 +104,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private final List<BluetoothDevice> foundDevices = new ArrayList<>();
     private int txCount = 0;
     private int rxCount = 0;
+    private UVProRadioControlManager radioControlManager;
 
     public UVProDropDownReceiver(MapView mapView,
                                      Context pluginContext,
@@ -121,6 +126,14 @@ public class UVProDropDownReceiver extends DropDownReceiver
 
     public void setEncryptionManager(EncryptionManager encryptionManager) {
         this.encryptionManager = encryptionManager;
+    }
+
+    public void setRadioControlManager(UVProRadioControlManager radioControlManager) {
+        this.radioControlManager = radioControlManager;
+        if (this.radioControlManager != null) {
+            this.radioControlManager.setSelectionListener(spec ->
+                    getMapView().post(this::updateSelectedRepeaterUi));
+        }
     }
 
     @Override
@@ -182,6 +195,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
         setupListeners();
         refreshFavoriteStrip();
         updateScanButtonText();
+        updateSelectedRepeaterUi();
         refreshLogView();
         appendLog("UV-PRO ready");
         return rootView;
@@ -206,6 +220,8 @@ public class UVProDropDownReceiver extends DropDownReceiver
         teamColorText = rootView.findViewById(getId("text_team_color"));
         btnScan = rootView.findViewById(getId("btn_scan"));
         btnDisconnect = rootView.findViewById(getId("btn_disconnect"));
+        btnLoadSelectedRepeater = rootView.findViewById(getId("btn_load_selected_repeater"));
+        selectedRepeaterText = rootView.findViewById(getId("text_selected_repeater"));
 
         favoritesLabel = rootView.findViewById(getId("favorites_label"));
         favoritesScroll = rootView.findViewById(getId("favorites_scroll"));
@@ -292,6 +308,10 @@ public class UVProDropDownReceiver extends DropDownReceiver
         if (btnSettings != null) {
             btnSettings.setOnClickListener(v -> showSettingsDialog());
         }
+
+        if (btnLoadSelectedRepeater != null) {
+            btnLoadSelectedRepeater.setOnClickListener(v -> loadSelectedRepeaterToRadio());
+        }
     }
 
     private void onScanOrConnectClicked() {
@@ -299,30 +319,43 @@ public class UVProDropDownReceiver extends DropDownReceiver
             btManager.disconnect();
             return;
         }
-        Context ctx = getMapView().getContext();
-
-        // Build list of bonded devices that have been previously connected through this plugin
-        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-        if (adapter == null) { appendLog("Bluetooth not available"); return; }
-
-        Set<BluetoothDevice> bonded = adapter.getBondedDevices();
-        foundDevices.clear();
-        if (bonded != null) {
-            for (BluetoothDevice d : bonded) {
-                if (BluetoothDeviceRegistry.find(ctx, d.getAddress()) != null) {
-                    foundDevices.add(d);
-                }
-            }
+        if (btManager.isConnecting()) {
+            appendLog("Cancelling current connection attempt...");
+            btManager.cancelConnectionAttempts();
         }
-
-        if (foundDevices.isEmpty()) {
-            // No registry matches — fall back to full bonded list (first-time pairing)
-            appendLog("Scanning for radios...");
-            btManager.startScan();
+        Context ctx = getMapView().getContext();
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        if (adapter == null) {
+            appendLog("Bluetooth not available");
             return;
         }
 
-        showDevicePicker();
+        String target = BluetoothDeviceRegistry.getConnectTargetAddress(ctx);
+        BtDeviceRecord targetRecord =
+                (target != null && !target.isEmpty()) ? BluetoothDeviceRegistry.find(ctx, target) : null;
+        boolean connectMode = targetRecord != null;
+
+        if (connectMode) {
+            try {
+                BluetoothDevice device = adapter.getRemoteDevice(targetRecord.address);
+                appendLog("Connecting to " + BluetoothDeviceRegistry.getDisplayTitle(targetRecord) + "...");
+                btManager.connect(device);
+            } catch (Exception e) {
+                appendLog("Favorite radio no longer available, switching to scan");
+                BluetoothDeviceRegistry.setConnectTargetAddress(ctx, "");
+                refreshFavoriteStrip();
+                updateScanButtonText();
+            }
+            return;
+        }
+
+        // Scan mode: never auto-select favorite target.
+        foundDevices.clear();
+        BluetoothDeviceRegistry.setConnectTargetAddress(ctx, "");
+        refreshFavoriteStrip();
+        updateScanButtonText();
+        appendLog("Scanning for radios...");
+        btManager.startScan();
     }
 
     private int dip(Context c, int d) {
@@ -333,7 +366,14 @@ public class UVProDropDownReceiver extends DropDownReceiver
         if (btnScan == null) return;
         Context ctx = getMapView().getContext();
         String tgt = BluetoothDeviceRegistry.getConnectTargetAddress(ctx);
-        if (!btManager.isConnected() && tgt != null) {
+        BluetoothDeviceRegistry.BtDeviceRecord rec =
+                (tgt != null && !tgt.isEmpty()) ? BluetoothDeviceRegistry.find(ctx, tgt) : null;
+        if (tgt != null && !tgt.isEmpty() && rec == null) {
+            // Stale connect target with no registry record: revert to scan mode.
+            BluetoothDeviceRegistry.setConnectTargetAddress(ctx, "");
+            tgt = null;
+        }
+        if (!btManager.isConnected() && tgt != null && !tgt.isEmpty()) {
             btnScan.setText("CONNECT");
         } else {
             btnScan.setText("SCAN & CONNECT");
@@ -608,6 +648,69 @@ public class UVProDropDownReceiver extends DropDownReceiver
         Log.d(TAG, message);
     }
 
+    private void updateSelectedRepeaterUi() {
+        if (selectedRepeaterText == null || btnLoadSelectedRepeater == null) {
+            return;
+        }
+        UVProRadioControlManager.RepeaterSpec spec =
+                radioControlManager != null ? radioControlManager.getSelectedRepeater() : null;
+        if (spec == null) {
+            selectedRepeaterText.setText("None selected");
+            btnLoadSelectedRepeater.setEnabled(false);
+            return;
+        }
+        selectedRepeaterText.setText(String.format(
+                Locale.US, "%s (RX %.5f / TX %.5f)",
+                spec.name, spec.rxFreqMHz, spec.txFreqMHz));
+        btnLoadSelectedRepeater.setEnabled(true);
+    }
+
+    private void loadSelectedRepeaterToRadio() {
+        if (radioControlManager == null) {
+            appendLog("Radio control unavailable");
+            Toast.makeText(getMapView().getContext(),
+                    "Radio control unavailable", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        appendLog("Preparing repeater load...");
+        new Thread(() -> {
+            if (!btManager.isConnected()) {
+                appendLog("Radio not connected in plugin; attempting auto-connect...");
+                btManager.connectToLastDevice();
+                long startMs = System.currentTimeMillis();
+                while (!btManager.isConnected()
+                        && (System.currentTimeMillis() - startMs) < 8000L) {
+                    try {
+                        Thread.sleep(250L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+
+            if (!btManager.isConnected()) {
+                getMapView().post(() -> {
+                    appendLog("Could not connect to radio. Use Scan & Connect, then retry.");
+                    Toast.makeText(getMapView().getContext(),
+                            "Radio not connected. Tap Scan & Connect.",
+                            Toast.LENGTH_LONG).show();
+                });
+                return;
+            }
+
+            getMapView().post(() -> appendLog("Loading selected repeater to channel 1..."));
+            UVProRadioControlManager.ProgramResult result =
+                    radioControlManager.programSelectedRepeaterAndTune(0);
+            getMapView().post(() -> {
+                appendLog(result.message);
+                Toast.makeText(getMapView().getContext(),
+                        result.message,
+                        result.success ? Toast.LENGTH_SHORT : Toast.LENGTH_LONG).show();
+            });
+        }, "uvpro-load-repeater").start();
+    }
+
     // --- Actions ---
 
     private void showDevicePicker() {
@@ -622,9 +725,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
             BluetoothDevice device = foundDevices.get(0);
             String name = resolveDeviceDisplayName(ctx, device);
             appendLog("Connecting to " + name + "...");
-            BluetoothDeviceRegistry.setConnectTargetAddress(ctx, device.getAddress());
-            refreshFavoriteStrip();
-            updateScanButtonText();
             btManager.connect(device);
             return;
         }
@@ -667,9 +767,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
                     .setAdapter(adapter, (dialog, which) -> {
                         BluetoothDevice selected = foundDevices.get(which);
                         appendLog("Connecting to " + names[which] + "...");
-                        BluetoothDeviceRegistry.setConnectTargetAddress(ctx, selected.getAddress());
-                        refreshFavoriteStrip();
-                        updateScanButtonText();
                         btManager.connect(selected);
                     })
                     .setNegativeButton("Cancel", (d, w) -> btManager.clearProbeSockets())

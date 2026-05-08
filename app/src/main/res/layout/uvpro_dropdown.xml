@@ -317,6 +317,33 @@
                 android:textStyle="bold"
                 android:paddingBottom="4dp" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Selected Repeater"
+                android:textColor="#FFAAAAAA"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/text_selected_repeater"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="None selected"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:paddingTop="2dp"
+                android:paddingBottom="6dp" />
+
+            <Button
+                android:id="@+id/btn_load_selected_repeater"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:text="Load Selected Repeater"
+                android:textSize="11sp"
+                android:enabled="false"
+                android:layout_marginBottom="6dp"
+                android:backgroundTint="#FF607D8B" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

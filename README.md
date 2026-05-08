@@ -18,6 +18,7 @@ A free, open-source ATAK plugin that connects UV-PRO radios to the Android Team 
 | **SA Relay (opt-in)** | ✅ Working | Network-to-radio bridge: broadcasts received SA over RF to radio-only users. Configurable in Settings. |
 | **AES-256 Encryption** | ✅ Working | Optional shared-secret AES-256-GCM for all radio traffic. All nodes must use the same secret. |
 | **Contact Tracking** | ✅ Working | Radios in range tracked as contacts with callsign, last-seen time, and position. |
+| **Map Repeater Load/Tune (KML)** | ✅ Working | Tap a repeater placemark from imported KML, then use **Load Selected Repeater** to program channel 1 and tune the radio (TX/RX + CTCSS/DCS). |
 | **Bluetooth Auto-Reconnect** | ✅ Working | Three-strategy SPP connection with exponential backoff reconnect (up to 5 attempts). |
 | **Send Ping** | ✅ Working | Lightweight keepalive — lets other nodes know you're active even without GPS. |
 ## How It Works
@@ -201,7 +202,17 @@ Use the **official ProGuard apply-mapping** from the ATAK/takrepo pipeline when 
 | **AES-256-GCM switch** | Enable encryption (enter the shared secret first) |
 | **Send Beacon** | Immediately broadcast your current position |
 | **Send Ping** | Send a lightweight keepalive with your callsign |
+| **Load Selected Repeater** | Program/tune selected KML repeater into radio channel 1 (includes TX/RX and CTCSS/DCS tone) |
 | **Settings** | Configure beacon interval, SA Relay, and other plugin options (team color is controlled by ATAK core settings) |
+
+### Repeater workflow (KML)
+
+1. Import repeater KML into ATAK.
+2. Tap a repeater placemark on the map (must contain TX/RX and tone metadata).
+3. Open **UV-PRO** tool and confirm **Selected Repeater** is populated.
+4. Tap **Load Selected Repeater** to write/tune the radio.
+
+Current implementation writes/tunes **channel 1** by design for deterministic testing. Future updates may add channel selection.
 
 ### Contact-centric routing (important)
 

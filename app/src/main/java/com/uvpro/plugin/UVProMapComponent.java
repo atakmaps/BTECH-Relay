@@ -11,6 +11,8 @@ import com.atakmap.android.ipc.AtakBroadcast;
 import com.uvpro.plugin.beacon.SmartBeacon;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.PointMapItem;
+import com.atakmap.android.maps.MapEvent;
+import com.atakmap.android.maps.MapEventDispatcher;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 import com.atakmap.app.preferences.ToolsPreferenceFragment;
 
@@ -20,6 +22,7 @@ import com.uvpro.plugin.cot.CotBridge;
 import com.uvpro.plugin.chat.ChatBridge;
 import com.uvpro.plugin.crypto.EncryptionManager;
 import com.uvpro.plugin.protocol.PacketRouter;
+import com.uvpro.plugin.radio.UVProRadioControlManager;
 import com.uvpro.plugin.ui.RadioStatusOverlay;
 import com.uvpro.plugin.ui.SettingsFragment;
 
@@ -52,6 +55,8 @@ public class UVProMapComponent extends DropDownMapComponent {
     private ContactTracker contactTracker;
     private UVProDropDownReceiver dropDownReceiver;
     private EncryptionManager encryptionManager;
+    private UVProRadioControlManager radioControlManager;
+    private MapEventDispatcher.MapEventDispatchListener mapItemClickListener;
     private Handler beaconHandler;
     private Runnable beaconRunnable;
     private android.content.BroadcastReceiver beaconIntervalReceiver;
@@ -136,6 +141,8 @@ try {
 
         // 5. BtConnectionManager (needs context + PacketRouter)
         btConnectionManager = new BtConnectionManager(context, packetRouter);
+        radioControlManager = new UVProRadioControlManager(btConnectionManager);
+        radioControlManager.start();
 
         // Status overlay: defer install until after GLWidgetsMapComponent is ready
         view.postDelayed(() -> RadioStatusOverlay.install(context), 2000);
@@ -172,6 +179,7 @@ try {
                 view, pluginContext, btConnectionManager, contactTracker);
         dropDownReceiver.setCotBridge(cotBridge);
         dropDownReceiver.setEncryptionManager(encryptionManager);
+        dropDownReceiver.setRadioControlManager(radioControlManager);
 
 
         // Wire PacketRouter RX count to dropdown UI
@@ -182,6 +190,19 @@ try {
                 new AtakBroadcast.DocumentedIntentFilter();
         filter.addAction(UVProDropDownReceiver.SHOW_PLUGIN);
         registerDropDownReceiver(dropDownReceiver, filter);
+
+        // Track selected repeater markers from map taps.
+        mapItemClickListener = event -> {
+            if (event == null || !MapEvent.ITEM_CLICK.equals(event.getType())) {
+                return;
+            }
+            if (event.getItem() == null || radioControlManager == null) {
+                return;
+            }
+            radioControlManager.onMapItemClicked(event.getItem());
+        };
+        view.getMapEventDispatcher().addMapEventListener(
+                MapEvent.ITEM_CLICK, mapItemClickListener);
 
         // 8. Register settings with ATAK Tools Preferences
         ToolsPreferenceFragment.register(
@@ -258,6 +279,10 @@ try {
             btConnectionManager.disconnect();
             btConnectionManager = null;
         }
+        if (radioControlManager != null) {
+            radioControlManager.stop();
+            radioControlManager = null;
+        }
         if (contactTracker != null) {
             contactTracker.stop();
             contactTracker = null;
@@ -276,6 +301,14 @@ try {
             } catch (Exception ignored) {
             }
             beaconIntervalReceiver = null;
+        }
+        if (mapItemClickListener != null && view != null) {
+            try {
+                view.getMapEventDispatcher().removeMapEventListener(
+                        MapEvent.ITEM_CLICK, mapItemClickListener);
+            } catch (Exception ignored) {
+            }
+            mapItemClickListener = null;
         }
 
         Log.i(TAG, "UV-PRO plugin shutdown complete");
@@ -400,6 +433,7 @@ try {
             }
 
             // Strategy B: always attempt on modern builds, even if A succeeded.
+            // Do not rely on X509TrustManager field typing; obfuscation/inlining changes this.
             int tmFieldsFound = 0;
             int tmFieldsInjected = 0;
             for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
@@ -420,6 +454,13 @@ try {
                 }
             }
 
+            // Fallback for heavily-obfuscated builds where no field advertises X509TrustManager:
+            // walk the object graph starting at CertificateManager instance and patch any
+            // reachable X509Certificate[] fields.
+            int graphInjected = injectIntoObjectGraphCertArrays(
+                    certMgr, cert, "cmgr", 4, new java.util.IdentityHashMap<>());
+            injectedB |= graphInjected > 0;
+
             for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
                 if (!java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
                 if (!java.util.Map.class.isAssignableFrom(f.getType())) continue;
@@ -428,8 +469,10 @@ try {
                 if (!(mapObj instanceof java.util.Map)) continue;
                 for (Object factory : ((java.util.Map<?, ?>) mapObj).values()) {
                     if (factory == null) continue;
-                    injectedB |= injectIntoObjectCertArrays(factory, cert,
-                            "cache." + factory.getClass().getSimpleName(), 2);
+                    int cacheInjected = injectIntoObjectGraphCertArrays(
+                            factory, cert, "cache." + factory.getClass().getSimpleName(),
+                            3, new java.util.IdentityHashMap<>());
+                    injectedB |= cacheInjected > 0;
                 }
             }
 
@@ -439,6 +482,7 @@ try {
                 Log.i(TAG, "injectCACert[B]: trustManagers found=" + tmFieldsFound
                         + " injected=" + tmFieldsInjected);
             }
+            Log.i(TAG, "injectCACert[B]: graph injection count=" + graphInjected);
 
             if (!injectedA && !injectedB) {
                 if (attempt < 15) {
@@ -482,6 +526,72 @@ try {
             Log.w(TAG, "injectIntoObjectCertArrays[" + label + "] failed: " + e.getMessage());
         }
         return injected;
+    }
+
+    /**
+     * Graph-walk fallback for obfuscated ATAK builds:
+     * recursively traverse object fields/collections/maps/arrays and append cert into any
+     * reachable X509Certificate[] field. Returns number of injected (or confirmed-present) arrays.
+     */
+    private int injectIntoObjectGraphCertArrays(Object obj, java.security.cert.X509Certificate cert,
+            String label, int depth, java.util.IdentityHashMap<Object, Boolean> visited) {
+        if (obj == null || depth < 0) return 0;
+        if (visited.containsKey(obj)) return 0;
+        visited.put(obj, Boolean.TRUE);
+        int injectedCount = 0;
+
+        try {
+            Class<?> cls = obj.getClass();
+
+            if (cls.isArray()) {
+                Class<?> comp = cls.getComponentType();
+                if (!comp.isPrimitive()) {
+                    Object[] arr = (Object[]) obj;
+                    for (int i = 0; i < arr.length; i++) {
+                        injectedCount += injectIntoObjectGraphCertArrays(
+                                arr[i], cert, label + "[" + i + "]", depth - 1, visited);
+                    }
+                }
+                return injectedCount;
+            }
+
+            if (obj instanceof java.util.Map) {
+                for (java.util.Map.Entry<?, ?> e : ((java.util.Map<?, ?>) obj).entrySet()) {
+                    injectedCount += injectIntoObjectGraphCertArrays(
+                            e.getValue(), cert, label + ".map", depth - 1, visited);
+                }
+                return injectedCount;
+            }
+
+            if (obj instanceof java.lang.Iterable) {
+                int i = 0;
+                for (Object v : (java.lang.Iterable<?>) obj) {
+                    injectedCount += injectIntoObjectGraphCertArrays(
+                            v, cert, label + ".it[" + i + "]", depth - 1, visited);
+                    i++;
+                }
+                return injectedCount;
+            }
+
+            for (java.lang.reflect.Field f : cls.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                f.setAccessible(true);
+                if (f.getType() == java.security.cert.X509Certificate[].class) {
+                    if (appendToCertArray(f, obj, cert, label + "." + f.getName())) {
+                        injectedCount++;
+                    }
+                    continue;
+                }
+                if (depth == 0 || f.getType().isPrimitive()) continue;
+                Object nested = f.get(obj);
+                if (nested == null) continue;
+                injectedCount += injectIntoObjectGraphCertArrays(
+                        nested, cert, label + "." + f.getName(), depth - 1, visited);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "injectIntoObjectGraphCertArrays[" + label + "] failed: " + e.getMessage());
+        }
+        return injectedCount;
     }
 
     private java.lang.reflect.Method findSingletonGetter(Class<?> cls) {

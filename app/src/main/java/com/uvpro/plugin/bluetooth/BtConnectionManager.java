@@ -76,6 +76,8 @@ public class BtConnectionManager {
 
     private final CopyOnWriteArrayList<ConnectionListener> listeners =
             new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<RawDataListener> rawDataListeners =
+            new CopyOnWriteArrayList<>();
 
     public interface ConnectionListener {
         void onConnected(BluetoothDevice device);
@@ -83,6 +85,14 @@ public class BtConnectionManager {
         void onError(String error);
         void onDeviceFound(BluetoothDevice device);
         default void onScanComplete() {}
+    }
+
+    /**
+     * Optional listener for raw bytes received from the radio.
+     * Return true if the data was consumed and should not be processed as KISS.
+     */
+    public interface RawDataListener {
+        boolean onRawBytes(byte[] data);
     }
 
     public BtConnectionManager(Context context, PacketRouter packetRouter) {
@@ -337,9 +347,24 @@ public class BtConnectionManager {
      */
     public void disconnect() {
         shouldReconnect.set(false);
+        connecting.set(false);
         connected.set(false);
         cleanup();
         notifyDisconnected("User disconnected");
+    }
+
+    /**
+     * Cancel any in-progress connect attempt and stop auto-reconnect.
+     * Useful when the user explicitly wants to scan/select another device.
+     */
+    public void cancelConnectionAttempts() {
+        shouldReconnect.set(false);
+        reconnectAttempts = 0;
+        connecting.set(false);
+        connected.set(false);
+        cleanup();
+        clearProbeSockets();
+        notifyDisconnected("Connection attempt cancelled");
     }
 
     /**
@@ -366,6 +391,26 @@ public class BtConnectionManager {
     }
 
     /**
+     * Send raw bytes directly to the radio (non-KISS protocol traffic).
+     */
+    public boolean sendRawBytes(byte[] data) {
+        if (!connected.get() || outputStream == null) {
+            Log.w(TAG, "Cannot send raw bytes: not connected");
+            return false;
+        }
+        try {
+            outputStream.write(data);
+            outputStream.flush();
+            Log.d(TAG, "Sent raw bytes: " + data.length + " bytes");
+            return true;
+        } catch (IOException e) {
+            Log.e(TAG, "Raw send failed: " + e.getMessage());
+            handleConnectionLost();
+            return false;
+        }
+    }
+
+    /**
      * Background thread that continuously reads KISS frames from the radio.
      */
     private void startReadThread() {
@@ -380,6 +425,20 @@ public class BtConnectionManager {
                         byte[] data = new byte[bytesRead];
                         System.arraycopy(buffer, 0, data, 0, bytesRead);
                         java.util.Arrays.fill(buffer, (byte) 0);
+
+                        boolean consumed = false;
+                        for (RawDataListener listener : rawDataListeners) {
+                            try {
+                                if (listener.onRawBytes(data)) {
+                                    consumed = true;
+                                }
+                            } catch (Exception e) {
+                                Log.w(TAG, "RawDataListener failed: " + e.getMessage());
+                            }
+                        }
+                        if (consumed) {
+                            continue;
+                        }
 
                         // KissFrameDecoder accumulates bytes and emits
                         // complete AX.25 frames when FEND delimiters are found
@@ -471,6 +530,10 @@ public class BtConnectionManager {
         return connected.get();
     }
 
+    public boolean isConnecting() {
+        return connecting.get();
+    }
+
     public String getConnectedDeviceName() {
         if (!connected.get()) return null;
         if (lastDevice != null) {
@@ -488,6 +551,14 @@ public class BtConnectionManager {
 
     public void removeListener(ConnectionListener listener) {
         listeners.remove(listener);
+    }
+
+    public void addRawDataListener(RawDataListener listener) {
+        rawDataListeners.add(listener);
+    }
+
+    public void removeRawDataListener(RawDataListener listener) {
+        rawDataListeners.remove(listener);
     }
 
     private void notifyConnected(BluetoothDevice device) {
