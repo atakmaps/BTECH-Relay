@@ -409,8 +409,10 @@ public class CotBuilder {
                 baos.write(buf, 0, n);
             }
             gzip.close();
-            return new String(baos.toByteArray(),
-                    java.nio.charset.StandardCharsets.UTF_8);
+            byte[] cotBytes = baos.toByteArray();
+            String cotXml = new String(cotBytes, java.nio.charset.StandardCharsets.UTF_8);
+            java.util.Arrays.fill(cotBytes, (byte) 0);
+            return cotXml;
         } catch (Exception e) {
             Log.e(TAG, "Failed to decompress CoT", e);
             return null;

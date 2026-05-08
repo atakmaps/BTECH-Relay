@@ -178,8 +178,8 @@ public class UVProPacket {
 
         byte[] callBytes = new byte[6];
         buf.get(callBytes);
-        gps.callsign = new String(callBytes,
-                java.nio.charset.StandardCharsets.US_ASCII).trim();
+        gps.callsign = new String(callBytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
+        java.util.Arrays.fill(callBytes, (byte) 0);
 
         gps.latitude = buf.getInt() / 1e7;
         gps.longitude = buf.getInt() / 1e7;
@@ -192,8 +192,9 @@ public class UVProPacket {
         // Optional: '|' + full callsign UTF-8 + optional '\0' + sender ATAK team (matches native SA)
         if (payload.length > 22) {
             try {
-                String extra = new String(payload, 22, payload.length - 22,
-                        java.nio.charset.StandardCharsets.UTF_8);
+                byte[] extraBytes = java.util.Arrays.copyOfRange(payload, 22, payload.length);
+                String extra = new String(extraBytes, java.nio.charset.StandardCharsets.UTF_8);
+                java.util.Arrays.fill(extraBytes, (byte) 0);
                 if (extra.startsWith("|")) {
                     String rest = extra.substring(1);
                     int nul = rest.indexOf('\0');

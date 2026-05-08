@@ -345,7 +345,7 @@ try {
                     .apply();
 
             // Store the P12 bytes in ATAK's cert DB (importCertificate reads raw bytes only,
-            // no password validation at this stage).
+            // format validation happens later when ATAK opens the truststore).
             byte[] imported = AtakCertificateDatabase.importCertificate(
                     p12.getAbsolutePath(),
                     null,
@@ -357,9 +357,9 @@ try {
                 Log.w(TAG, "AtakCertificateDatabase.importCertificate returned null — file may not exist yet");
             }
 
-            // Always store the credential regardless of import result so that ATAK's
+            // Always store the truststore auth token regardless of import result so that ATAK's
             // plugin-manager UI shows the field pre-populated and the SSL handshake can
-            // open the PKCS12 truststore when it is ready.
+            // open the truststore file when it is ready.
             AtakCertificateDatabase.saveCertificatePassword(
                     UPDATE_TRUSTSTORE_AUTH,
                     AtakAuthenticationCredentials.TYPE_updateServerCaPassword,
