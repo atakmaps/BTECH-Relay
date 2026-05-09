@@ -55,8 +55,6 @@ Output directory: ${PLUGINS_DIR}/
 
   - ${SOURCE_ZIP}
       TPP source archive; root folder ${TPP_ROOT}/
-      Built via git archive (respects .gitignore — no vendored JARs included).
-      TPC provisions Artifactory via isDevKitEnabled() in root build.gradle.
 EOF
 if [[ -n "${APK_NAME}" ]]; then
   cat >> "${MANIFEST}" << EOF

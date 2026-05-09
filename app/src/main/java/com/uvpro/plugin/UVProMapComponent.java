@@ -314,91 +314,284 @@ try {
         Log.i(TAG, "UV-PRO plugin shutdown complete");
     }
 
-    private static final String UPDATE_SERVER_URL = "https://atakmaps.com/plugins/product.infz";
-    private static final String UPDATE_TRUSTSTORE_ASSET = "atakmaps-ca.p12";
-    private static final String UPDATE_TRUSTSTORE_LOCAL = "uvpro_update_server_ca.p12";
-
     /**
-     * Configure ATAK plugin-management prefs and install the official update-server truststore.
-     * Certificate DB methods are accessed via reflection to avoid static dependency on
-     * com.atakmap.net.AtakCertificateDatabase which is a security-gated API surface.
+     * Silently configure ATAK's built-in plugin update server on first install.
+     * Sets the update server URL, enables auto-sync and update server checks.
+     * Runs every launch but only writes prefs when the URL isn't already set.
      */
     private void configureUpdateServer(Context context) {
         try {
-            Context atakContext = MapView.getMapView().getContext();
+            // Must use ATAK's own context — plugin context writes to the wrong prefs file
+            Context atakContext = com.atakmap.android.maps.MapView.getMapView().getContext();
             android.content.SharedPreferences prefs =
                     android.preference.PreferenceManager.getDefaultSharedPreferences(atakContext);
+            final String UPDATE_SERVER_URL = "https://atakmaps.com/plugins/product.infz";
+            final String PREF_URL         = "atakUpdateServerUrl";
+            final String PREF_ENABLED     = "appMgmtEnableUpdateServer";
+            final String PREF_AUTO_SYNC   = "app_mgmt_auto_sync";
 
-            java.io.File p12 = new java.io.File(context.getFilesDir(), UPDATE_TRUSTSTORE_LOCAL);
-            copyAssetToFile(context, UPDATE_TRUSTSTORE_ASSET, p12);
+            String existing = prefs.getString(PREF_URL, "");
+            if (!existing.contains("atakmaps.com")) {
+                prefs.edit()
+                        .putString(PREF_URL,        UPDATE_SERVER_URL)
+                        .putBoolean(PREF_ENABLED,   true)
+                        .putBoolean(PREF_AUTO_SYNC, true)
+                        .apply();
+                Log.i(TAG, "Plugin update server configured: " + UPDATE_SERVER_URL);
+            }
 
-            prefs.edit()
-                    .putString("atakUpdateServerUrl", UPDATE_SERVER_URL)
-                    .putBoolean("appMgmtEnableUpdateServer", true)
-                    .putBoolean("repoStartupSync", true)
-                    .putBoolean("atakPluginScanningOnStartup", true)
-                    .putString("updateServerCaLocation", p12.getAbsolutePath())
-                    .apply();
+            // Register the Let's Encrypt CA so ATAK's custom SSL manager trusts atakmaps.com.
+            // ATAK's CertificateManagerBase requires a non-empty password entry for
+            // UPDATE_SERVER_TRUST_STORE_CA — the settings UI never stores one, so we do it here.
+            registerUpdateServerCA(context);
 
-            storeCertViaReflection(p12.getAbsolutePath());
+        } catch (Exception e) {
+            Log.w(TAG, "configureUpdateServer failed: " + e.getMessage());
+        }
+    }
+
+    private void registerUpdateServerCA(Context context) {
+        try {
+            // Parse ISRG Root X1 directly as X509Certificate — no PKCS12 involved.
+            // Android's KeyStore.getInstance("PKCS12") does not enumerate trusted-cert-only
+            // entries, so loadCertificate() always returns 0. Bypassing that entirely by
+            // calling CertificateManager.addCertificate(X509Certificate) which injects
+            // the cert into the in-memory certificates list used by getAcceptedIssuers().
+            java.io.InputStream is = context.getAssets().open("isrg-root-x1.pem");
+            java.security.cert.X509Certificate caCert = (java.security.cert.X509Certificate)
+                    java.security.cert.CertificateFactory.getInstance("X.509")
+                            .generateCertificate(is);
+            is.close();
+            Log.i(TAG, "registerUpdateServerCA: loaded CA cert: " + caCert.getSubjectDN());
+
+            injectCACert(caCert, 0);
+        } catch (Exception e) {
+            Log.w(TAG, "registerUpdateServerCA failed: " + e.getMessage(), e);
+        }
+    }
+
+    private void injectCACert(final java.security.cert.X509Certificate cert, final int attempt) {
+        try {
+            Class<?> certMgrClass = Class.forName("com.atakmap.net.CertificateManager");
+
+            java.lang.reflect.Method getInst = findSingletonGetter(certMgrClass);
+            if (getInst == null) {
+                Log.w(TAG, "injectCACert: getInstance() not found");
+                return;
+            }
+            Object certMgr = getInst.invoke(null);
+            boolean injectedA = false;
+            boolean injectedB = false;
+
+            // Strategy A: try addCertificate(X509Certificate)-like method by signature.
+            java.lang.reflect.Field implField = null;
+            java.lang.reflect.Method addCertMethod = null;
+            outerA:
+            for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                if (f.getType().isPrimitive()) continue;
+                Class<?> c = f.getType();
+                while (c != null && c != Object.class) {
+                    for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                        if (java.lang.reflect.Modifier.isStatic(m.getModifiers())) continue;
+                        if (m.getReturnType() != void.class) continue;
+                        Class<?>[] params = m.getParameterTypes();
+                        if (params.length == 1
+                                && params[0].isAssignableFrom(java.security.cert.X509Certificate.class)) {
+                            implField = f;
+                            implField.setAccessible(true);
+                            addCertMethod = m;
+                            addCertMethod.setAccessible(true);
+                            Log.d(TAG, "injectCACert[A]: field=" + f.getName()
+                                    + " type=" + f.getType().getName()
+                                    + " method=" + m.getName());
+                            break outerA;
+                        }
+                    }
+                    c = c.getSuperclass();
+                }
+            }
+
+            if (implField != null) {
+                Object impl = implField.get(certMgr);
+                if (impl == null) {
+                    if (attempt < 15) {
+                        new Handler(Looper.getMainLooper()).postDelayed(
+                                () -> injectCACert(cert, attempt + 1), 1000);
+                        Log.d(TAG, "injectCACert[A]: _impl null, retry " + (attempt + 1));
+                    } else {
+                        Log.w(TAG, "injectCACert[A]: _impl still null after " + attempt + " retries");
+                    }
+                    return;
+                }
+                addCertMethod.invoke(impl, cert);
+                Log.i(TAG, "injectCACert[A]: cert injected (attempt " + attempt + ")");
+                clearSocketFactoriesCache(certMgrClass);
+                injectedA = true;
+            } else {
+                Log.d(TAG, "injectCACert[A]: addCertificate-like method not found");
+            }
+
+            // Strategy B: always attempt on modern builds, even if A succeeded.
+            // Do not rely on X509TrustManager field typing; obfuscation/inlining changes this.
+            int tmFieldsFound = 0;
+            int tmFieldsInjected = 0;
+            for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                if (!javax.net.ssl.X509TrustManager.class.isAssignableFrom(f.getType())) continue;
+                tmFieldsFound++;
+                f.setAccessible(true);
+                Object tm = f.get(certMgr);
+                if (tm == null) {
+                    Log.d(TAG, "injectCACert[B]: TrustManager " + f.getName() + " is null");
+                    continue;
+                }
+                Log.d(TAG, "injectCACert[B]: TrustManager field=" + f.getName()
+                        + " type=" + f.getType().getName());
+                if (injectIntoObjectCertArrays(tm, cert, "tm." + f.getName(), 2)) {
+                    injectedB = true;
+                    tmFieldsInjected++;
+                }
+            }
+
+            // Fallback for heavily-obfuscated builds where no field advertises X509TrustManager:
+            // walk the object graph starting at CertificateManager instance and patch any
+            // reachable X509Certificate[] fields.
+            int graphInjected = injectIntoObjectGraphCertArrays(
+                    certMgr, cert, "cmgr", 4, new java.util.IdentityHashMap<>());
+            injectedB |= graphInjected > 0;
+
+            for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
+                if (!java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                if (!java.util.Map.class.isAssignableFrom(f.getType())) continue;
+                f.setAccessible(true);
+                Object mapObj = f.get(null);
+                if (!(mapObj instanceof java.util.Map)) continue;
+                for (Object factory : ((java.util.Map<?, ?>) mapObj).values()) {
+                    if (factory == null) continue;
+                    int cacheInjected = injectIntoObjectGraphCertArrays(
+                            factory, cert, "cache." + factory.getClass().getSimpleName(),
+                            3, new java.util.IdentityHashMap<>());
+                    injectedB |= cacheInjected > 0;
+                }
+            }
+
+            if (tmFieldsFound == 0) {
+                Log.w(TAG, "injectCACert[B]: X509TrustManager field not found on " + certMgrClass.getName());
+            } else {
+                Log.i(TAG, "injectCACert[B]: trustManagers found=" + tmFieldsFound
+                        + " injected=" + tmFieldsInjected);
+            }
+            Log.i(TAG, "injectCACert[B]: graph injection count=" + graphInjected);
+
+            if (!injectedA && !injectedB) {
+                if (attempt < 15) {
+                    new Handler(Looper.getMainLooper()).postDelayed(
+                            () -> injectCACert(cert, attempt + 1), 1000);
+                    Log.d(TAG, "injectCACert: no injection target yet, retry " + (attempt + 1));
+                } else {
+                    Log.w(TAG, "injectCACert: no injection target found after " + attempt + " retries");
+                }
+                return;
+            }
+
+            Log.i(TAG, "Update server CA registered successfully (A=" + injectedA + ", B=" + injectedB + ")");
+            if (injectedB) {
+                Log.d(TAG, "injectCACert[B]: cache preserved intentionally");
+            }
             triggerUpdateServerSync();
         } catch (Exception e) {
-            Log.w(TAG, "configureUpdateServer failed: " + e.getMessage(), e);
+            Log.w(TAG, "injectCACert failed (attempt " + attempt + "): " + e.getMessage(), e);
         }
+    }
+
+    private boolean injectIntoObjectCertArrays(Object obj, java.security.cert.X509Certificate cert,
+            String label, int depth) {
+        if (obj == null || depth < 0) return false;
+        boolean injected = false;
+        try {
+            for (java.lang.reflect.Field f : obj.getClass().getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                f.setAccessible(true);
+                if (f.getType() == java.security.cert.X509Certificate[].class) {
+                    injected |= appendToCertArray(f, obj, cert, label + "." + f.getName());
+                    continue;
+                }
+                if (depth == 0 || f.getType().isPrimitive()) continue;
+                Object nested = f.get(obj);
+                if (nested == null) continue;
+                injected |= injectIntoObjectCertArrays(nested, cert, label + "." + f.getName(), depth - 1);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "injectIntoObjectCertArrays[" + label + "] failed: " + e.getMessage());
+        }
+        return injected;
     }
 
     /**
-     * Import the update-server CA into ATAK's certificate database and store its (empty) passphrase
-     * using reflection, so no static dependency on AtakCertificateDatabase is needed at compile time.
+     * Graph-walk fallback for obfuscated ATAK builds:
+     * recursively traverse object fields/collections/maps/arrays and append cert into any
+     * reachable X509Certificate[] field. Returns number of injected (or confirmed-present) arrays.
      */
-    private void storeCertViaReflection(String p12Path) {
+    private int injectIntoObjectGraphCertArrays(Object obj, java.security.cert.X509Certificate cert,
+            String label, int depth, java.util.IdentityHashMap<Object, Boolean> visited) {
+        if (obj == null || depth < 0) return 0;
+        if (visited.containsKey(obj)) return 0;
+        visited.put(obj, Boolean.TRUE);
+        int injectedCount = 0;
+
         try {
-            Class<?> certDb    = Class.forName("com.atakmap.net.AtakCertificateDatabase");
-            Class<?> certIface = Class.forName("com.atakmap.net.AtakCertificateDatabaseIFace");
-            Class<?> authCreds = Class.forName("com.atakmap.net.AtakAuthenticationCredentials");
+            Class<?> cls = obj.getClass();
 
-            String certType = (String) certIface.getField("TYPE_UPDATE_SERVER_TRUST_STORE_CA").get(null);
-            String pwdType  = (String) authCreds.getField("TYPE_updateServerCaPassword").get(null);
-
-            // importCertificate(String path, String pwd, String type, boolean delete) → byte[]
-            for (java.lang.reflect.Method m : certDb.getDeclaredMethods()) {
-                if (!"importCertificate".equals(m.getName())) continue;
-                Class<?>[] p = m.getParameterTypes();
-                if (p.length == 4 && p[0] == String.class && p[2] == String.class
-                        && p[3] == boolean.class) {
-                    m.setAccessible(true);
-                    Object result = m.invoke(null, p12Path, null, certType, false);
-                    Log.i(TAG, "importCertificate via reflection: " + (result != null ? "ok" : "null"));
-                    break;
+            if (cls.isArray()) {
+                Class<?> comp = cls.getComponentType();
+                if (!comp.isPrimitive()) {
+                    Object[] arr = (Object[]) obj;
+                    for (int i = 0; i < arr.length; i++) {
+                        injectedCount += injectIntoObjectGraphCertArrays(
+                                arr[i], cert, label + "[" + i + "]", depth - 1, visited);
+                    }
                 }
+                return injectedCount;
             }
 
-            // saveCertificatePassword(String pwd, String type, String server) → void
-            for (java.lang.reflect.Method m : certDb.getDeclaredMethods()) {
-                if (!"saveCertificatePassword".equals(m.getName())) continue;
-                Class<?>[] p = m.getParameterTypes();
-                if (p.length == 3 && p[0] == String.class && p[1] == String.class) {
-                    m.setAccessible(true);
-                    m.invoke(null, "", pwdType, null);
-                    Log.i(TAG, "saveCertificatePassword via reflection: ok");
-                    break;
+            if (obj instanceof java.util.Map) {
+                for (java.util.Map.Entry<?, ?> e : ((java.util.Map<?, ?>) obj).entrySet()) {
+                    injectedCount += injectIntoObjectGraphCertArrays(
+                            e.getValue(), cert, label + ".map", depth - 1, visited);
                 }
+                return injectedCount;
+            }
+
+            if (obj instanceof java.lang.Iterable) {
+                int i = 0;
+                for (Object v : (java.lang.Iterable<?>) obj) {
+                    injectedCount += injectIntoObjectGraphCertArrays(
+                            v, cert, label + ".it[" + i + "]", depth - 1, visited);
+                    i++;
+                }
+                return injectedCount;
+            }
+
+            for (java.lang.reflect.Field f : cls.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue;
+                f.setAccessible(true);
+                if (f.getType() == java.security.cert.X509Certificate[].class) {
+                    if (appendToCertArray(f, obj, cert, label + "." + f.getName())) {
+                        injectedCount++;
+                    }
+                    continue;
+                }
+                if (depth == 0 || f.getType().isPrimitive()) continue;
+                Object nested = f.get(obj);
+                if (nested == null) continue;
+                injectedCount += injectIntoObjectGraphCertArrays(
+                        nested, cert, label + "." + f.getName(), depth - 1, visited);
             }
         } catch (Exception e) {
-            Log.w(TAG, "storeCertViaReflection failed: " + e.getMessage());
+            Log.w(TAG, "injectIntoObjectGraphCertArrays[" + label + "] failed: " + e.getMessage());
         }
-    }
-
-    private static void copyAssetToFile(Context context, String assetName, java.io.File dest)
-            throws java.io.IOException {
-        try (java.io.InputStream in = context.getAssets().open(assetName);
-             java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                out.write(buf, 0, n);
-            }
-        }
+        return injectedCount;
     }
 
     private java.lang.reflect.Method findSingletonGetter(Class<?> cls) {
@@ -441,8 +634,57 @@ try {
         return null;
     }
 
+    /** Append cert to an X509Certificate[] field on obj. Returns true if appended (or already present). */
+    private boolean appendToCertArray(java.lang.reflect.Field f, Object obj,
+            java.security.cert.X509Certificate cert, String label) {
+        try {
+            java.security.cert.X509Certificate[] existing =
+                    (java.security.cert.X509Certificate[]) f.get(obj);
+            if (existing != null) {
+                for (java.security.cert.X509Certificate c : existing) {
+                    if (cert.equals(c)) {
+                        Log.d(TAG, "appendToCertArray[" + label + "]: already present");
+                        return true;
+                    }
+                }
+            }
+            int len = existing != null ? existing.length : 0;
+            java.security.cert.X509Certificate[] updated =
+                    new java.security.cert.X509Certificate[len + 1];
+            if (existing != null) System.arraycopy(existing, 0, updated, 0, len);
+            updated[len] = cert;
+            f.set(obj, updated);
+            Log.i(TAG, "appendToCertArray[" + label + "]: appended to array of len " + len);
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "appendToCertArray[" + label + "] failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Clear the static socketFactories Map cache on CertificateManager. */
+    private void clearSocketFactoriesCache(Class<?> certMgrClass) {
+        try {
+            for (java.lang.reflect.Field f : certMgrClass.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
+                        && java.util.Map.class.isAssignableFrom(f.getType())) {
+                    f.setAccessible(true);
+                    Object map = f.get(null);
+                    if (map instanceof java.util.Map) {
+                        ((java.util.Map<?, ?>) map).clear();
+                        Log.i(TAG, "clearSocketFactoriesCache: cleared");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "clearSocketFactoriesCache failed: " + e.getMessage());
+        }
+    }
+
     /**
-     * Trigger a silent sync of ATAK's plugin update server after truststore/prefs are applied.
+     * Trigger a silent sync of ATAK's plugin update server.
+     * Called after CA injection so the startup sync (which fired before the plugin loaded)
+     * gets a second chance with the correct trust context.
      */
     private void triggerUpdateServerSync() {
         triggerUpdateServerSync(0);

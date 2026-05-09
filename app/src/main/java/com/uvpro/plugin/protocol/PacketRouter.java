@@ -101,10 +101,9 @@ public class PacketRouter {
             if (encryptionManager != null && encryptionManager.isEnabled()) {
                 byte[] decrypted = encryptionManager.decrypt(infoField);
                 if (decrypted != null) {
-                    infoField = java.util.Arrays.copyOf(decrypted, decrypted.length);
-                    java.util.Arrays.fill(decrypted, (byte) 0);
+                    infoField = decrypted;
                 }
-                // If decryption returns null, use raw (unencrypted packet)
+                // If decryption returns null, try raw (unencrypted packet)
             }
 
             routeUVProPacket(srcCall, srcSsid, infoField);
@@ -174,9 +173,8 @@ public class PacketRouter {
                 break;
 
             case UVProPacket.TYPE_PING:
-                byte[] pingBytes = packet.getPayload();
-                String pingCall = new String(pingBytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
-                java.util.Arrays.fill(pingBytes, (byte) 0);
+                String pingCall = new String(packet.getPayload(),
+                        java.nio.charset.StandardCharsets.US_ASCII).trim();
                 Log.d(TAG, "Ping from: " + pingCall);
                 contactTracker.handlePing(pingCall);
                 chatBridge.onPeerActivity(callsign);
@@ -262,12 +260,12 @@ public class PacketRouter {
         byte[] msgBytes = new byte[buf.remaining()];
         buf.get(msgBytes);
 
-        String sender = new String(senderBytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
-        java.util.Arrays.fill(senderBytes, (byte) 0);
-        String room = new String(roomBytes, java.nio.charset.StandardCharsets.US_ASCII).trim();
-        java.util.Arrays.fill(roomBytes, (byte) 0);
-        String message = new String(msgBytes, java.nio.charset.StandardCharsets.UTF_8);
-        java.util.Arrays.fill(msgBytes, (byte) 0);
+        String sender = new String(senderBytes,
+                java.nio.charset.StandardCharsets.US_ASCII).trim();
+        String room = new String(roomBytes,
+                java.nio.charset.StandardCharsets.US_ASCII).trim();
+        String message = new String(msgBytes,
+                java.nio.charset.StandardCharsets.UTF_8);
 
         Log.d(TAG, "Chat mid=" + messageId + " from " + sender + " [" + room + "] len=" + message.length());
         chatBridge.injectRadioMessage(sender, room, message, messageId);

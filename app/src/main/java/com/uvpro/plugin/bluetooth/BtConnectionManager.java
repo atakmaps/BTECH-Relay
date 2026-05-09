@@ -379,11 +379,9 @@ public class BtConnectionManager {
 
         try {
             byte[] kissFrame = kissEncoder.encode(ax25Frame);
-            byte[] wireBytes = java.util.Arrays.copyOf(kissFrame, kissFrame.length);
-            java.util.Arrays.fill(kissFrame, (byte) 0);
-            outputStream.write(wireBytes);
+            outputStream.write(kissFrame);
             outputStream.flush();
-            Log.d(TAG, "Sent KISS frame: " + wireBytes.length + " bytes");
+            Log.d(TAG, "Sent KISS frame: " + kissFrame.length + " bytes");
             return true;
         } catch (IOException e) {
             Log.e(TAG, "Send failed: " + e.getMessage());
