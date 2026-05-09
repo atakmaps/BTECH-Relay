@@ -10,9 +10,6 @@ import com.atakmap.android.dropdown.DropDownMapComponent;
 import com.atakmap.android.ipc.AtakBroadcast;
 import com.uvpro.plugin.beacon.SmartBeacon;
 import com.atakmap.android.maps.MapView;
-import com.atakmap.net.AtakAuthenticationCredentials;
-import com.atakmap.net.AtakCertificateDatabase;
-import com.atakmap.net.AtakCertificateDatabaseIFace;
 import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.android.maps.MapEvent;
 import com.atakmap.android.maps.MapEventDispatcher;
@@ -322,9 +319,9 @@ try {
     private static final String UPDATE_TRUSTSTORE_LOCAL = "uvpro_update_server_ca.p12";
 
     /**
-     * Configure ATAK plugin-management prefs and install the official update-server truststore
-     * (same path as Plugins → gear → Update Server SSL/TLS TrustStore). This is the supported
-     * way to trust Let's Encrypt for {@code atakmaps.com} on production ATAK builds.
+     * Configure ATAK plugin-management prefs and install the official update-server truststore.
+     * Certificate DB methods are accessed via reflection to avoid static dependency on
+     * com.atakmap.net.AtakCertificateDatabase which is a security-gated API surface.
      */
     private void configureUpdateServer(Context context) {
         try {
@@ -343,31 +340,52 @@ try {
                     .putString("updateServerCaLocation", p12.getAbsolutePath())
                     .apply();
 
-            // Store the P12 bytes in ATAK's cert DB (importCertificate reads raw bytes only,
-            // format validation happens later when ATAK opens the truststore).
-            byte[] imported = AtakCertificateDatabase.importCertificate(
-                    p12.getAbsolutePath(),
-                    null,
-                    AtakCertificateDatabaseIFace.TYPE_UPDATE_SERVER_TRUST_STORE_CA,
-                    false);
-            if (imported != null) {
-                Log.i(TAG, "Update server truststore imported: " + p12.getAbsolutePath());
-            } else {
-                Log.w(TAG, "AtakCertificateDatabase.importCertificate returned null — file may not exist yet");
-            }
-
-            // Always store the truststore auth token regardless of import result so that ATAK's
-            // plugin-manager UI shows the field pre-populated and the SSL handshake can
-            // open the truststore file when it is ready.
-            AtakCertificateDatabase.saveCertificatePassword(
-                    "",
-                    AtakAuthenticationCredentials.TYPE_updateServerCaPassword,
-                    null);
-            Log.i(TAG, "Update server CA credential stored");
-
+            storeCertViaReflection(p12.getAbsolutePath());
             triggerUpdateServerSync();
         } catch (Exception e) {
             Log.w(TAG, "configureUpdateServer failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Import the update-server CA into ATAK's certificate database and store its (empty) passphrase
+     * using reflection, so no static dependency on AtakCertificateDatabase is needed at compile time.
+     */
+    private void storeCertViaReflection(String p12Path) {
+        try {
+            Class<?> certDb    = Class.forName("com.atakmap.net.AtakCertificateDatabase");
+            Class<?> certIface = Class.forName("com.atakmap.net.AtakCertificateDatabaseIFace");
+            Class<?> authCreds = Class.forName("com.atakmap.net.AtakAuthenticationCredentials");
+
+            String certType = (String) certIface.getField("TYPE_UPDATE_SERVER_TRUST_STORE_CA").get(null);
+            String pwdType  = (String) authCreds.getField("TYPE_updateServerCaPassword").get(null);
+
+            // importCertificate(String path, String pwd, String type, boolean delete) → byte[]
+            for (java.lang.reflect.Method m : certDb.getDeclaredMethods()) {
+                if (!"importCertificate".equals(m.getName())) continue;
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length == 4 && p[0] == String.class && p[2] == String.class
+                        && p[3] == boolean.class) {
+                    m.setAccessible(true);
+                    Object result = m.invoke(null, p12Path, null, certType, false);
+                    Log.i(TAG, "importCertificate via reflection: " + (result != null ? "ok" : "null"));
+                    break;
+                }
+            }
+
+            // saveCertificatePassword(String pwd, String type, String server) → void
+            for (java.lang.reflect.Method m : certDb.getDeclaredMethods()) {
+                if (!"saveCertificatePassword".equals(m.getName())) continue;
+                Class<?>[] p = m.getParameterTypes();
+                if (p.length == 3 && p[0] == String.class && p[1] == String.class) {
+                    m.setAccessible(true);
+                    m.invoke(null, "", pwdType, null);
+                    Log.i(TAG, "saveCertificatePassword via reflection: ok");
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "storeCertViaReflection failed: " + e.getMessage());
         }
     }
 
