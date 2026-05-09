@@ -1,41 +1,47 @@
-<!-- ic_uvpro.xml - Option A: cyan handheld radio on navy circular badge -->
+<!-- ic_uvpro.xml - Vector drawable icon for UV-PRO plugin -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp"
     android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
 
-    <!-- Navy badge -->
+    <!-- Outer circle (radio wave) -->
     <path
-        android:pathData="M24,4C12.95,4 4,12.95 4,24s8.95,20 20,20 20,-8.95 20,-20S35.05,4 24,4z"
-        android:fillColor="#1E293B" />
+        android:pathData="M24,4C12.95,4 4,12.95 4,24s8.95,20 20,20 20,-8.95 20,-20S35.05,4 24,4zM24,40c-8.84,0 -16,-7.16 -16,-16S15.16,8 24,8s16,7.16 16,16 -7.16,16 -16,16z"
+        android:fillColor="#FF00BCD4" />
 
-    <!-- Radio body (cyan) -->
+    <!-- Radio antenna -->
     <path
-        android:pathData="M17.5,17.5h13c1.38,0 2.5,1.12 2.5,2.5v12.5c0,1.38 -1.12,2.5 -2.5,2.5h-13c-1.38,0 -2.5,-1.12 -2.5,-2.5V20c0,-1.38 1.12,-2.5 2.5,-2.5z"
-        android:fillColor="#06B6D4" />
+        android:pathData="M24,12 L24,28"
+        android:strokeColor="#FF00BCD4"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
 
-    <!-- Antenna -->
+    <!-- Radio waves left -->
     <path
-        android:pathData="M22,11.5h4v4.5h-4z"
-        android:fillColor="#22D3EE" />
-    <path
-        android:pathData="M23,8h2v4h-2z"
-        android:fillColor="#E2E8F0" />
+        android:pathData="M16,18 Q18,24 16,30"
+        android:strokeColor="#FF00BCD4"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
 
-    <!-- Display / keypad (dark inset) -->
+    <!-- Radio waves right -->
     <path
-        android:pathData="M19.5,21.5h9v3.5h-9z"
-        android:fillColor="#0F172A" />
-    <path
-        android:pathData="M19.5,26h9v2h-9z"
-        android:fillColor="#0F172A" />
-    <path
-        android:pathData="M19.5,29.5h5.5v2h-5.5z"
-        android:fillColor="#0F172A" />
+        android:pathData="M32,18 Q30,24 32,30"
+        android:strokeColor="#FF00BCD4"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:strokeLineCap="round" />
 
-    <!-- PTT / side button highlight -->
+    <!-- Base dot -->
     <path
-        android:pathData="M30.5,24.5m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0"
-        android:fillColor="#E2E8F0" />
+        android:pathData="M24,32 m-3,0 a3,3 0,1 1,6 0 a3,3 0,1 1,-6 0"
+        android:fillColor="#FF00BCD4" />
+
+    <!-- Arrow/relay indicator -->
+    <path
+        android:pathData="M12,24 L8,24 M40,24 L36,24"
+        android:strokeColor="#FF00BCD4"
+        android:strokeWidth="2"
+        android:strokeLineCap="round" />
 </vector>
