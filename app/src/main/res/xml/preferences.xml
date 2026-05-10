@@ -62,7 +62,7 @@
             android:summary="Same value on every radio that uses RF encryption"
             android:defaultValue=""
             android:dialogTitle="Enter shared secret"
-            android:inputType="0x81" />
+            android:inputType="129" />
 
     </PreferenceCategory>
 

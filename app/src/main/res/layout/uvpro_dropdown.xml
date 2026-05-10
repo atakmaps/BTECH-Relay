@@ -206,7 +206,7 @@
                     android:textSize="13sp"
                     android:background="#FF1B1B1B"
                     android:padding="8dp"
-                    android:inputType="0x81"
+                    android:inputType="129"
                     android:singleLine="true"
                     android:layout_marginEnd="4dp" />
 
