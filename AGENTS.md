@@ -153,11 +153,16 @@ adb -s SERIAL logcat -v time "*:S" UVPro.Router:D UVPro.ChatBridge:D UVPro.CotBr
 
 The plugin **auto-configures** ATAK’s **HTTPS plugin repo** (`atakmaps.com`) and **imports trust** via **reflection** on ATAK internals. It is **not** fire-and-forget: a bad merge can restore **`getCACerts … 0 certs`**, **`CentralTrustManager … blocked`**, and **`Socket is closed`** on repo sync.
 
+### Merge gate (blocking)
+
+Treat this as a **hard gate** for merges that touch startup, certs, update-server prefs, ProGuard, lifecycle, or submission tooling.
+If any item below is uncertain, **stop and do not merge** until verified.
+
 **High-risk files (review conflicts carefully; prefer `main` unless intentionally replacing trust logic):**
 
 | Area | Files / assets |
 |------|----------------|
-| Trust + prefs + reflection | `UVProMapComponent.java` — `configureUpdateServerStatic`, `installUpdateServerTruststoreCompat`, `bindUpdateServerCaToHost`, `registerUpdateServerCA`, `reloadCertificateManagerFromDatabase`, deferred sync |
+| Trust + prefs + reflection | `UVProMapComponent.java` — keep the `configureUpdateServerStatic` → `installUpdateServerTruststoreCompat` → `reloadCertificateManagerFromDatabase` → `registerUpdateServerCA` → deferred sync chain; includes reflection on ATAK cert internals (`AtakCertificateDatabase`, `AtakCertificateDatabaseBase`, `CertificateManager`) |
 | Early hook | `UVProLifecycle.java` — must keep **`UVProMapComponent.applyUpdateServerTrustEarly`** (or an equivalent early trust path) |
 | Bundled trust material | `app/src/main/assets/atakmaps-ca.p12`, `app/src/main/assets/isrg-root-x1.pem` |
 | PKCS#12 unlock (not a Java literal) | `app/src/main/res/values/strings.xml` — **`uvpro_trust_bundle_p12_key`** (Base64) |
@@ -165,6 +170,7 @@ The plugin **auto-configures** ATAK’s **HTTPS plugin repo** (`atakmaps.com`) a
 **Do not:**
 
 - Remove or bypass the **`configureUpdateServerStatic` → import → reload → register CA → schedule sync** chain for “cleanup.”
+- Remove or "simplify" the explicit **`configureUpdateServerStatic` → `installUpdateServerTruststoreCompat` → `reloadCertificateManagerFromDatabase` → `registerUpdateServerCA` → deferred sync** sequence used for repo trust bootstrapping.
 - Delay trust setup until **after** ATAK has already started **TakHttp** repo sync (race condition).
 - Rename ATAK **SharedPreferences** keys in that flow without verifying behavior on **ATAK-CIV 5.5.1**.
 - Point the **quick-launcher** tool at full-color **`ic_uvpro`** without understanding ATAK toolbar **tint** (use **`ic_uvpro_toolbar`** via **`UVProTool.toolbarIcon`**).
@@ -172,6 +178,14 @@ The plugin **auto-configures** ATAK’s **HTTPS plugin repo** (`atakmaps.com`) a
 **R8 / ProGuard:** Root `app/proguard-gradle.txt` applies **`-applymapping`** from ATAK’s mapping and keeps **`com.uvpro.plugin.**`**. Do not shrink or repackage in ways that break reflection entry points.
 
 **After a merge:** `./gradlew assembleCivRelease`, install on a device with **`pm clear com.atakmap.app.civ`** (and fresh **`/sdcard/atak`** / **`/sdcard/ATAK`** if testing a true clean slate), then check logcat for **`UVPro`**, **`getCACerts for atakmaps.com`**, and TAK Package Management **green sync**.
+
+**Do-not-merge triggers:**
+
+- Any change that removes/reorders the trust bootstrapping chain or delays it until after ATAK repo HTTPS starts.
+- Missing trust assets (`atakmaps-ca.p12`, `isrg-root-x1.pem`) or missing `uvpro_trust_bundle_p12_key`.
+- Broken reflection paths to ATAK cert classes/managers.
+- ProGuard/R8 changes that strip `com.uvpro.plugin.**` or reflection entry points.
+- Merge completed without release build + clean-device validation + green sync confirmation.
 
 ### TPC submission zips
 
