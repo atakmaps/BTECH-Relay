@@ -1,5 +1,6 @@
 package com.uvpro.plugin;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
@@ -16,6 +17,8 @@ import com.atakmap.android.maps.MapEvent;
 import com.atakmap.android.maps.MapEventDispatcher;
 import com.atakmap.coremap.maps.coords.GeoPoint;
 import com.atakmap.app.preferences.ToolsPreferenceFragment;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.uvpro.plugin.bluetooth.BtConnectionManager;
 import com.uvpro.plugin.contacts.ContactTracker;
@@ -41,6 +44,13 @@ import com.uvpro.plugin.ui.SettingsFragment;
 public class UVProMapComponent extends DropDownMapComponent {
 
     private static final String TAG = "UVPro";
+
+    /**
+     * {@link #configureUpdateServerStatic} runs from several hooks (lifecycle, onCreate, delayed posts).
+     * Without this guard each call queues another full set of deferred {@code ProductProviderManager.sync}
+     * runs, which makes ATAK prompt "update available" on every completion.
+     */
+    private static final AtomicBoolean updateServerDeferredSyncsScheduled = new AtomicBoolean(false);
 
     /**
      * PKCS#12 store key for {@code assets/atakmaps-ca.p12}, from {@link R.string#uvpro_trust_bundle_p12_key}
@@ -1261,14 +1271,61 @@ try {
         return best;
     }
 
-    private static java.lang.reflect.Method findSyncMethod(Class<?> mgrClass) {
+    /**
+     * Prefer {@code ProductProviderManager.sync(Context, boolean, RepoSyncListener)} with a null listener:
+     * ATAK substitutes a default listener that only broadcasts {@code PRODUCT_REPOS_REFRESHED} and does
+     * <strong>not</strong> call {@code checkForAvailableUpdates()} (which shows the "update available" dialog).
+     * The two-arg {@code sync(boolean, boolean)} path always ends in {@code checkForAvailableUpdates()}.
+     */
+    private static java.lang.reflect.Method findContextSyncMethod(Class<?> mgrClass) {
+        final Class<?> listenerCls;
+        try {
+            listenerCls = Class.forName(
+                    "com.atakmap.android.update.ProductProviderManager$RepoSyncListener");
+        } catch (ClassNotFoundException e) {
+            return null;
+        }
         for (java.lang.reflect.Method m : mgrClass.getMethods()) {
             if (m.getReturnType() != void.class) continue;
             Class<?>[] p = m.getParameterTypes();
-            if (p.length == 2 && p[0] == boolean.class && p[1] == boolean.class) {
+            if (p.length == 3
+                    && Context.class.isAssignableFrom(p[0])
+                    && p[1] == boolean.class
+                    && listenerCls.isAssignableFrom(p[2])) {
                 m.setAccessible(true);
                 return m;
             }
+        }
+        return null;
+    }
+
+    /** Activity / MapView context for {@link #findContextSyncMethod}; avoids update-nag sync path. */
+    private static Context resolveRepoSyncUiContext(Object productProviderMgr) {
+        try {
+            MapView mv = MapView.getMapView();
+            if (mv != null) {
+                Context c = mv.getContext();
+                if (c != null) {
+                    return c;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (productProviderMgr == null) {
+            return null;
+        }
+        try {
+            for (java.lang.reflect.Field f : productProviderMgr.getClass().getDeclaredFields()) {
+                if (!Activity.class.isAssignableFrom(f.getType())) {
+                    continue;
+                }
+                f.setAccessible(true);
+                Object a = f.get(productProviderMgr);
+                if (a instanceof Context) {
+                    return (Context) a;
+                }
+            }
+        } catch (Throwable ignored) {
         }
         return null;
     }
@@ -1326,6 +1383,10 @@ try {
      * and after {@code addCertificate}. Manual "Sync" in App Mgmt is why dev looked fine.
      */
     private static void scheduleDeferredUpdateServerSyncs() {
+        if (!updateServerDeferredSyncsScheduled.compareAndSet(false, true)) {
+            Log.d(TAG, "scheduleDeferredUpdateServerSyncs: already scheduled this process, skip");
+            return;
+        }
         Handler h = new Handler(Looper.getMainLooper());
         long[] delaysMs = {
                 800L, 2500L, 6000L, 15000L, 30000L, 45000L, 60000L, 120000L
@@ -1379,13 +1440,16 @@ try {
                 Log.w(TAG, "runUpdateServerSyncOnce: providerManager null");
                 return;
             }
-            java.lang.reflect.Method sync = findSyncMethod(mgr.getClass());
-            if (sync == null) {
-                Log.w(TAG, "runUpdateServerSyncOnce: sync(boolean,boolean) not found");
+            Context uiCtx = resolveRepoSyncUiContext(mgr);
+            java.lang.reflect.Method syncCtx = findContextSyncMethod(mgr.getClass());
+            if (uiCtx != null && syncCtx != null) {
+                // Second parameter is RepoSyncTask _bSilent (see ATAK 5.5.1 ProductProviderManager).
+                syncCtx.invoke(mgr, uiCtx, Boolean.TRUE, null);
+                Log.i(TAG, "runUpdateServerSyncOnce: silent repo sync (refresh only, no update prompt)");
                 return;
             }
-            sync.invoke(mgr, true, false);
-            Log.i(TAG, "runUpdateServerSyncOnce: ProductProviderManager.sync triggered");
+            Log.w(TAG, "runUpdateServerSyncOnce: skip — missing UI Context or sync(Context,boolean,Listener); "
+                    + "avoiding 2-arg sync to prevent repeated update-available dialogs");
         } catch (Exception e) {
             Log.w(TAG, "runUpdateServerSyncOnce failed: " + e.getMessage());
         }
