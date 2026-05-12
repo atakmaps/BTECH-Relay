@@ -25,6 +25,9 @@ import com.atakmap.android.preference.PluginPreferenceFragment;
 public class SettingsFragment extends PluginPreferenceFragment
         implements SharedPreferences.OnSharedPreferenceChangeListener {
 
+    /** Key registered with {@code ToolsPreferenceFragment} in {@link com.uvpro.plugin.UVProMapComponent}. */
+    public static final String TOOL_SETTINGS_KEY = "uvproPreference";
+
     public static final String PREF_BEACON_INTERVAL = "uvpro_beacon_interval";
     public static final String PREF_AUTO_RECONNECT = "uvpro_auto_reconnect";
     public static final String PREF_ENCRYPTION_ENABLED = "uvpro_encryption_enabled";

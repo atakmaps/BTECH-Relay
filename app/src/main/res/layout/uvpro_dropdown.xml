@@ -259,6 +259,48 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
+                    android:text="Smart Beacon"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="13sp" />
+
+                <Switch
+                    android:id="@+id/switch_smart_beacon"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Adapts beacon rate to speed and heading changes."
+                android:textColor="#FF888888"
+                android:textSize="11sp"
+                android:paddingTop="2dp"
+                android:paddingBottom="4dp" />
+
+            <Button
+                android:id="@+id/btn_manage_smart_beacon_settings"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Manage Smart Beacon Settings"
+                android:textSize="12sp"
+                android:minHeight="40dp"
+                android:backgroundTint="#FF455A64" />
+
+            <LinearLayout
+                android:id="@+id/row_beacon_interval"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingTop="8dp">
+
+                <TextView
+                    android:id="@+id/text_gps_beacon_interval_label"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
                     android:text="GPS Beacon Interval"
                     android:textColor="#FFFFFFFF"
                     android:textSize="13sp" />
@@ -273,30 +315,15 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <LinearLayout
+            <Button
+                android:id="@+id/btn_manage_plugin_beacon_settings"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingTop="6dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="SA Relay (TAK → radio)"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="13sp" />
-
-                <TextView
-                    android:id="@+id/text_sa_relay_status"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Off"
-                    android:textColor="#FF888888"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
+                android:layout_marginTop="8dp"
+                android:text="Manage Beacon Settings"
+                android:textSize="12sp"
+                android:minHeight="40dp"
+                android:backgroundTint="#FF455A64" />
         </LinearLayout>
 
         <!-- ==================== RADIO INFO ==================== -->

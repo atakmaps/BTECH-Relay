@@ -31,6 +31,7 @@ import com.atakmap.android.dropdown.DropDownReceiver;
 import com.atakmap.android.ipc.AtakBroadcast;
 import com.atakmap.android.maps.MapView;
 
+import com.uvpro.plugin.beacon.SmartBeacon;
 import com.uvpro.plugin.bluetooth.BluetoothDeviceRegistry;
 import com.uvpro.plugin.bluetooth.BluetoothDeviceRegistry.BtDeviceRecord;
 import com.uvpro.plugin.bluetooth.BtConnectionManager;
@@ -87,7 +88,11 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private TextView logText;
     private TextView encryptionStatusText;
     private TextView beaconIntervalText;
-    private TextView saRelayStatusText;
+    private TextView gpsBeaconIntervalLabel;
+    private View rowBeaconInterval;
+    private Switch switchSmartBeacon;
+    private Button btnManageSmartBeaconSettings;
+    private Button btnManagePluginBeaconSettings;
     private TextView teamColorText;
     private Button btnScan;
     private Button btnDisconnect;
@@ -112,6 +117,21 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private Button btnSetPassphrase;
 
     private final LinkedList<String> logLines = new LinkedList<>();
+    private final CompoundButton.OnCheckedChangeListener smartBeaconCheckedListener =
+            (buttonView, isChecked) -> {
+                if (!buttonView.isPressed()) {
+                    return;
+                }
+                Context c = getMapView().getContext();
+                SmartBeacon.setEnabled(c, isChecked);
+                applySmartBeaconIntervalGreyState(isChecked);
+                appendLog("Smart beacon " + (isChecked ? "on" : "off"));
+                try {
+                    AtakBroadcast.getInstance().sendBroadcast(
+                            new Intent(UVProMapComponent.ACTION_BEACON_INTERVAL_CHANGED));
+                } catch (Exception ignored) {
+                }
+            };
     private final List<BluetoothDevice> foundDevices = new ArrayList<>();
     private int txCount = 0;
     private int rxCount = 0;
@@ -229,7 +249,11 @@ public class UVProDropDownReceiver extends DropDownReceiver
         logText = rootView.findViewById(getId("text_log"));
         encryptionStatusText = rootView.findViewById(getId("text_encryption_status"));
         beaconIntervalText = rootView.findViewById(getId("text_beacon_interval"));
-        saRelayStatusText = rootView.findViewById(getId("text_sa_relay_status"));
+        gpsBeaconIntervalLabel = rootView.findViewById(getId("text_gps_beacon_interval_label"));
+        rowBeaconInterval = rootView.findViewById(getId("row_beacon_interval"));
+        switchSmartBeacon = rootView.findViewById(getId("switch_smart_beacon"));
+        btnManageSmartBeaconSettings = rootView.findViewById(getId("btn_manage_smart_beacon_settings"));
+        btnManagePluginBeaconSettings = rootView.findViewById(getId("btn_manage_plugin_beacon_settings"));
         teamColorText = rootView.findViewById(getId("text_team_color"));
         btnScan = rootView.findViewById(getId("btn_scan"));
         btnDisconnect = rootView.findViewById(getId("btn_disconnect"));
@@ -327,6 +351,18 @@ public class UVProDropDownReceiver extends DropDownReceiver
         View btnSettings = rootView.findViewById(getId("btn_settings"));
         if (btnSettings != null) {
             btnSettings.setOnClickListener(v -> showSettingsDialog());
+        }
+
+        if (switchSmartBeacon != null) {
+            switchSmartBeacon.setOnCheckedChangeListener(smartBeaconCheckedListener);
+        }
+        if (btnManageSmartBeaconSettings != null) {
+            btnManageSmartBeaconSettings.setOnClickListener(v ->
+                    com.uvpro.plugin.beacon.SmartBeaconSettingsDialog.show(
+                            getMapView().getContext(), null));
+        }
+        if (btnManagePluginBeaconSettings != null) {
+            btnManagePluginBeaconSettings.setOnClickListener(v -> showSettingsDialog());
         }
 
         if (btnLoadSelectedRepeater != null) {
@@ -641,11 +677,11 @@ public class UVProDropDownReceiver extends DropDownReceiver
             beaconIntervalText.setText(beaconSec + "s");
         }
 
-        boolean saOn = SettingsFragment.isSaRelayEnabled(ctx);
-        if (saRelayStatusText != null) {
-            saRelayStatusText.setText(saOn ? "On" : "Off");
-            saRelayStatusText.setTextColor(saOn ? 0xFF4CAF50 : 0xFF888888);
+        boolean smartOn = SmartBeacon.isEnabled(ctx);
+        if (switchSmartBeacon != null) {
+            switchSmartBeacon.setChecked(smartOn);
         }
+        applySmartBeaconIntervalGreyState(smartOn);
 
         // Team color (ATAK preference)
         try {
@@ -654,6 +690,22 @@ public class UVProDropDownReceiver extends DropDownReceiver
                 teamColorText.setText(teamColor != null ? teamColor : "Cyan");
             }
         } catch (Exception ignored) {
+        }
+    }
+
+    /** Dims the fixed-interval row when Smart Beacon controls the rate. */
+    private void applySmartBeaconIntervalGreyState(boolean smartOn) {
+        float alpha = smartOn ? 0.38f : 1.0f;
+        if (rowBeaconInterval != null) {
+            rowBeaconInterval.setAlpha(alpha);
+        }
+        int labelColor = smartOn ? 0xFF666666 : 0xFFFFFFFF;
+        int valueColor = smartOn ? 0xFF6A9EAC : 0xFF00BCD4;
+        if (gpsBeaconIntervalLabel != null) {
+            gpsBeaconIntervalLabel.setTextColor(labelColor);
+        }
+        if (beaconIntervalText != null) {
+            beaconIntervalText.setTextColor(valueColor);
         }
     }
 
@@ -1238,44 +1290,8 @@ public class UVProDropDownReceiver extends DropDownReceiver
                 com.uvpro.plugin.ui.BluetoothDevicesManagement.show(ctx, null));
         layout.addView(btnBluetoothDevices);
 
-        TextView divider = new TextView(ctx);
-        divider.setText(" ");
-        layout.addView(divider);
-
-        // Smart Beacon toggle
-        android.widget.LinearLayout rowSmartBeacon = new android.widget.LinearLayout(ctx);
-        rowSmartBeacon.setOrientation(android.widget.LinearLayout.HORIZONTAL);
-        rowSmartBeacon.setPadding(0, 20, 0, 4);
-
-        TextView labelSmartBeacon = new TextView(ctx);
-        labelSmartBeacon.setText("Smart Beacon");
-        labelSmartBeacon.setTextColor(0xFFFFFFFF);
-        labelSmartBeacon.setTextSize(15);
-        LinearLayout.LayoutParams sbLabelParams = new LinearLayout.LayoutParams(
-                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        labelSmartBeacon.setLayoutParams(sbLabelParams);
-        rowSmartBeacon.addView(labelSmartBeacon);
-
-        android.widget.Switch switchSmartBeacon = new android.widget.Switch(ctx);
-        boolean smartBeaconOn = com.uvpro.plugin.beacon.SmartBeacon.isEnabled(ctx);
-        switchSmartBeacon.setChecked(smartBeaconOn);
-        rowSmartBeacon.addView(switchSmartBeacon);
-        layout.addView(rowSmartBeacon);
-
-        TextView hintSmartBeacon = new TextView(ctx);
-        hintSmartBeacon.setText("Adapts beacon rate to speed and heading changes.");
-        hintSmartBeacon.setTextColor(0xFFAAAAAA);
-        hintSmartBeacon.setTextSize(11);
-        layout.addView(hintSmartBeacon);
-
-        // Manage Smart Beacon Settings button
-        android.widget.Button btnSmartBeaconSettings = new android.widget.Button(ctx);
-        btnSmartBeaconSettings.setText("Manage Smart Beacon Settings");
-        btnSmartBeaconSettings.setOnClickListener(v ->
-                com.uvpro.plugin.beacon.SmartBeaconSettingsDialog.show(ctx, null));
-        layout.addView(btnSmartBeaconSettings);
-
-        // Beacon interval field (greyed out when smart beacon is on)
+        // Beacon interval field (greyed out when smart beacon is on — toggle is on main panel)
+        boolean smartBeaconOn = SmartBeacon.isEnabled(ctx);
         TextView labelBeacon = new TextView(ctx);
         labelBeacon.setText("\nGPS Beacon Interval (seconds)");
         labelBeacon.setTextColor(smartBeaconOn ? 0xFF666666 : 0xFFAAAAAA);
@@ -1287,13 +1303,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
         editBeacon.setEnabled(!smartBeaconOn);
         editBeacon.setAlpha(smartBeaconOn ? 0.35f : 1.0f);
         layout.addView(editBeacon);
-
-        // Toggle beacon interval enabled/greyed based on switch
-        switchSmartBeacon.setOnCheckedChangeListener((btn, checked) -> {
-            editBeacon.setEnabled(!checked);
-            editBeacon.setAlpha(checked ? 0.35f : 1.0f);
-            labelBeacon.setTextColor(checked ? 0xFF666666 : 0xFFAAAAAA);
-        });
 
         // Section header
         TextView headerMessaging = new TextView(ctx);
@@ -1368,7 +1377,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
                     editor.putBoolean(SettingsFragment.PREF_SA_RELAY_ENABLED,
                             switchSaRelay.isChecked());
 
-                    com.uvpro.plugin.beacon.SmartBeacon.setEnabled(ctx, switchSmartBeacon.isChecked());
                     prefs.edit().putBoolean(SettingsFragment.PREF_PING_REPLY_ENABLED,
                             switchPingReply.isChecked()).apply();
 

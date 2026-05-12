@@ -271,7 +271,7 @@ try {
                 new ToolsPreferenceFragment.ToolPreference(
                         "UV-PRO Settings",
                         "UV-PRO radio bridge configuration",
-                        "uvproPreference",
+                        SettingsFragment.TOOL_SETTINGS_KEY,
                         UVProTool.toolbarIcon(context),
                         new SettingsFragment(context)));
 
@@ -324,7 +324,7 @@ try {
         }
 
         // Unregister settings
-        ToolsPreferenceFragment.unregister("uvproPreference");
+        ToolsPreferenceFragment.unregister(SettingsFragment.TOOL_SETTINGS_KEY);
 
         // Remove status overlay from the map
         RadioStatusOverlay.uninstall();
