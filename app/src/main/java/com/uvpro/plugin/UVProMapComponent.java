@@ -225,8 +225,8 @@ try {
         view.postDelayed(() -> autoConnectLastRadio(context), 4000);
 
         // Defer trust + prefs to the next frame and again on long delays so cert DB import wins races
-        // with startup. We do not call ProductProviderManager.sync from the plugin (avoids air-gapped
-        // DNS spam); operators use TAK Package Management → Sync when they have connectivity.
+        // with startup. Repo sync behavior remains one silent attempt per process (see
+        // scheduleOneStartupRepoSyncIfNeeded), so air-gapped devices do not enter retry loops.
         view.post(() -> configureUpdateServerStatic(context, view.getContext().getApplicationContext()));
         view.postDelayed(() -> configureUpdateServerStatic(context, view.getContext().getApplicationContext()), 8000L);
         view.postDelayed(() -> configureUpdateServerStatic(context, view.getContext().getApplicationContext()), 45000L);
