@@ -1,0 +1,21 @@
+---
+description: Deploy signed plugin zips to cloud release flow
+alwaysApply: true
+---
+
+# Signed Plugin Release Flow
+
+When the user provides a signed plugin zip path (TPC/TAK Signed), perform this flow end-to-end:
+
+1. Verify `main` is current and pushed (`git status`, `git log -1`, `git push origin main`).
+2. Inspect the zip and extract the signed APK.
+3. Validate APK package/version metadata before deploy.
+4. Upload APK to cloud plugin path (`/var/www/html/plugins/com.uvpro.plugin.apk`).
+5. Update server `generate_infz.py` version + version_code to match the signed APK.
+6. Regenerate `product.infz` and sync to `/var/www/html/plugins/5.5.1/product.infz`.
+7. Verify:
+   - `product.inf` row version/version_code/hash/size matches the signed APK
+   - canonical and versioned APK URLs return HTTP 200
+8. Report final deployed version, hash, and URLs to the user.
+
+Prefer explicit verification over assumptions. If any step fails, stop and report the exact blocker.
