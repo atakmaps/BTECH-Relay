@@ -28,7 +28,8 @@ public class SmartBeacon {
     public static final String KEY_TURN_SLOPE     = "uvpro_smart_beacon_turn_slope";
 
     // Default parameter values (based on the Smart Beacon algorithm)
-    public static final boolean DEFAULT_ENABLED        = true;
+    // Default OFF so fixed beacon interval remains authoritative unless explicitly enabled.
+    public static final boolean DEFAULT_ENABLED        = false;
     public static final int     DEFAULT_LOW_SPEED      = 5;    // mph
     public static final int     DEFAULT_HIGH_SPEED     = 60;   // mph
     public static final int     DEFAULT_SLOW_RATE      = 180;  // seconds (3 min)

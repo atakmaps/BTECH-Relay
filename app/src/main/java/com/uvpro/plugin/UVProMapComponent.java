@@ -3,8 +3,10 @@ package com.uvpro.plugin;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
+import android.preference.PreferenceManager;
 import android.util.Base64;
 import android.util.Log;
 
@@ -92,6 +94,8 @@ public class UVProMapComponent extends DropDownMapComponent {
     public static final String PLUGIN_PACKAGE = "com.uvpro.plugin";
     public static final String ACTION_BEACON_INTERVAL_CHANGED =
             "com.uvpro.plugin.BEACON_INTERVAL_CHANGED";
+    private static final String PREF_SMART_BEACON_V21_OFF_MIGRATED =
+            "uvpro_smart_beacon_v21_off_migrated";
 
     private Context pluginContext;
     private MapView mapView;
@@ -124,6 +128,7 @@ public class UVProMapComponent extends DropDownMapComponent {
         // context = plugin context, view.getContext() = map context (use for UI)
         this.pluginContext = context;
         this.mapView = view;
+        applySmartBeaconV21OffMigration(getBeaconPrefsContext());
 
         // Update-server TLS + prefs as early as possible (before CotBridge/BT/etc.). Production
         // logcat showed GetRepoIndexOperation handshaking while trust was still empty; deferring
@@ -1485,6 +1490,29 @@ try {
             }
         };
         beaconHandler.postDelayed(beaconRunnable, 30_000L);
+    }
+
+    /**
+     * One-time v21 safety migration:
+     * force Smart Beacon OFF to avoid inherited unexpected fast-cadence behavior.
+     */
+    private void applySmartBeaconV21OffMigration(Context prefsCtx) {
+        if (prefsCtx == null) {
+            return;
+        }
+        try {
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(prefsCtx);
+            if (prefs.getBoolean(PREF_SMART_BEACON_V21_OFF_MIGRATED, false)) {
+                return;
+            }
+            prefs.edit()
+                    .putBoolean(SmartBeacon.KEY_ENABLED, false)
+                    .putBoolean(PREF_SMART_BEACON_V21_OFF_MIGRATED, true)
+                    .apply();
+            Log.i(TAG, "Applied v21 migration: Smart Beacon forced OFF.");
+        } catch (Exception e) {
+            Log.w(TAG, "Smart Beacon v21 migration failed: " + e.getMessage());
+        }
     }
 
     private void sendBeaconIfConnected() {

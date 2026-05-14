@@ -394,7 +394,6 @@ public class UVProDropDownReceiver extends DropDownReceiver
         if (btnSettings != null) {
             btnSettings.setOnClickListener(v -> showSettingsDialog());
         }
-
         if (switchSmartBeacon != null) {
             switchSmartBeacon.setOnCheckedChangeListener(smartBeaconCheckedListener);
         }

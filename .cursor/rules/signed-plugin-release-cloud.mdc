@@ -10,7 +10,7 @@ When the user provides a signed plugin zip path (TPC/TAK Signed), perform this f
 1. Verify `main` is current and pushed (`git status`, `git log -1`, `git push origin main`).
 2. Inspect the zip and extract the signed APK.
 3. Validate APK package/version metadata before deploy.
-4. Create/push release tag `v<version>` on the release commit if missing, then create/update GitHub Release and attach signed APK/AAB and source submission zip.
+4. **Always** create or push release tag `v<version>` on the release commit (create the tag if it does not exist yet; do not skip this step), then create/update GitHub Release and attach signed APK/AAB and source submission zip.
 5. Upload APK to cloud plugin path (`/var/www/html/plugins/com.uvpro.plugin.apk`).
 6. Update server `generate_infz.py` version + version_code to match the signed APK.
 7. Regenerate `product.infz` and sync to `/var/www/html/plugins/5.5.1/product.infz`.

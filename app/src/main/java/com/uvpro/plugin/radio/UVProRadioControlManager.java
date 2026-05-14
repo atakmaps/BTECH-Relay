@@ -20,7 +20,6 @@ import java.util.regex.Pattern;
 public class UVProRadioControlManager implements BtConnectionManager.RawDataListener {
 
     private static final String TAG = "UVPro.RadioCtrl";
-
     private static final int BASIC_GROUP = 2;
     private static final int CMD_READ_SETTINGS = 10;
     private static final int CMD_WRITE_SETTINGS = 11;
