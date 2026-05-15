@@ -71,6 +71,17 @@ public class CotBuilder {
                                             double lat, double lon,
                                             double alt, double speed,
                                             double course, String teamColor) {
+        return buildPositionCot(callsign, lat, lon, alt, speed, course, teamColor, STALE_MILLIS);
+    }
+
+    /**
+     * Build a CoT event for a radio contact position with configurable team color and stale window.
+     */
+    public static CotEvent buildPositionCot(String callsign,
+                                            double lat, double lon,
+                                            double alt, double speed,
+                                            double course, String teamColor,
+                                            long staleMillis) {
         CotEvent event = new CotEvent();
 
         String normalizedCall = callsign.trim().toUpperCase();
@@ -80,13 +91,12 @@ public class CotBuilder {
         event.setHow("m-g");          // machine GPS
 
         long now = System.currentTimeMillis();
-        String timeStr = formatCotTime(now);
-        String staleStr = formatCotTime(now + STALE_MILLIS);
+        long effectiveStaleMs = Math.max(60_000L, staleMillis);
 
         event.setTime(new com.atakmap.coremap.maps.time.CoordinatedTime(now));
         event.setStart(new com.atakmap.coremap.maps.time.CoordinatedTime(now));
         event.setStale(new com.atakmap.coremap.maps.time.CoordinatedTime(
-                now + STALE_MILLIS));
+                now + effectiveStaleMs));
 
         // HAE: Height Above Ellipsoid
         double hae = (alt >= 0 && alt < 99999) ? alt : CotPoint.UNKNOWN;

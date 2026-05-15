@@ -17,11 +17,13 @@ import com.atakmap.coremap.cot.event.CotEvent;
 
 import com.uvpro.plugin.BuildConfig;
 import com.uvpro.plugin.ax25.Ax25Frame;
+import com.uvpro.plugin.beacon.SmartBeacon;
 import com.uvpro.plugin.bluetooth.BtConnectionManager;
 import com.uvpro.plugin.chat.ChatBridge;
 import com.uvpro.plugin.crypto.EncryptionManager;
 import com.uvpro.plugin.protocol.UVProPacket;
 import com.uvpro.plugin.protocol.PacketFragmenter;
+import com.uvpro.plugin.ui.SettingsFragment;
 
 import java.util.List;
 import java.util.Set;
@@ -44,6 +46,8 @@ import java.util.Map;
 public class CotBridge {
 
     private static final String TAG = "UVPro.CotBridge";
+    private static final long STALE_GRACE_MS = 30_000L;
+    private static final long MIN_CONTACT_STALE_MS = 60_000L;
 
     private final Context pluginContext;
     private final MapView mapView;
@@ -374,7 +378,8 @@ public class CotBridge {
                     : "Cyan";
 
             CotEvent event = CotBuilder.buildPositionCot(
-                    callsign, lat, lon, alt, speed, course, teamForCot);
+                    callsign, lat, lon, alt, speed, course, teamForCot,
+                    resolveInboundContactStaleMs());
 
             if (event != null && event.isValid()) {
                 Log.d(TAG, "Injecting position CoT for " + callsign + " team=" + teamForCot);
@@ -384,6 +389,36 @@ public class CotBridge {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error injecting position CoT", e);
+        }
+    }
+
+    /**
+     * Receiver-side stale policy for inbound radio contacts.
+     * ATAK marks contacts stale based on the CoT stale timestamp we dispatch.
+     */
+    private long resolveInboundContactStaleMs() {
+        try {
+            Context prefsCtx = mapView != null && mapView.getContext() != null
+                    ? mapView.getContext()
+                    : pluginContext;
+            if (prefsCtx == null) {
+                return 5 * 60_000L;
+            }
+
+            long staleMs;
+            if (SmartBeacon.isEnabled(prefsCtx)) {
+                int slowRateSec = Math.max(1, SmartBeacon.getSlowRate(prefsCtx));
+                int fastRateSec = Math.max(1, SmartBeacon.getFastRate(prefsCtx));
+                int minTurnTimeSec = Math.max(1, SmartBeacon.getMinTurnTime(prefsCtx));
+                int expectedMaxGapSec = Math.max(slowRateSec, fastRateSec + minTurnTimeSec);
+                staleMs = expectedMaxGapSec * 1000L;
+            } else {
+                int fixedSec = Math.max(1, SettingsFragment.getBeaconIntervalSec(pluginContext));
+                staleMs = fixedSec * 1000L;
+            }
+            return Math.max(MIN_CONTACT_STALE_MS, staleMs + STALE_GRACE_MS);
+        } catch (Exception ignored) {
+            return 5 * 60_000L;
         }
     }
 

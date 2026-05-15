@@ -1477,10 +1477,10 @@ try {
             @Override
             public void run() {
                 sendBeaconIfConnected();
-                // Smart beacon: check every 10s. Fixed: check at interval.
                 long nextCheckMs;
                 if (SmartBeacon.isEnabled(getBeaconPrefsContext())) {
-                    nextCheckMs = 10_000L; // poll every 10s; algorithm decides when to actually send
+                    int checkSec = SmartBeacon.getRecommendedCheckIntervalSec(getBeaconPrefsContext());
+                    nextCheckMs = checkSec * 1000L;
                 } else {
                     int intervalSec = SettingsFragment.getBeaconIntervalSec(pluginContext);
                     if (intervalSec < 1) intervalSec = 1;

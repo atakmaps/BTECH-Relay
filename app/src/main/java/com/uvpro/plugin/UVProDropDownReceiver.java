@@ -120,6 +120,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private Button btnScan;
     private Button btnDisconnect;
     private Button btnLoadSelectedRepeater;
+    private Button btnRadioSilence;
     private Button btnRefreshChannels;
     private Button btnVfoA;
     private Button btnVfoB;
@@ -300,6 +301,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
         btnScan = rootView.findViewById(getId("btn_scan"));
         btnDisconnect = rootView.findViewById(getId("btn_disconnect"));
         btnLoadSelectedRepeater = rootView.findViewById(getId("btn_load_selected_repeater"));
+        btnRadioSilence = rootView.findViewById(getId("btn_radio_silence"));
         btnRefreshChannels = rootView.findViewById(getId("btn_refresh_channels"));
         btnVfoA = rootView.findViewById(getId("btn_vfo_a"));
         btnVfoB = rootView.findViewById(getId("btn_vfo_b"));
@@ -400,7 +402,14 @@ public class UVProDropDownReceiver extends DropDownReceiver
         if (btnManageSmartBeaconSettings != null) {
             btnManageSmartBeaconSettings.setOnClickListener(v ->
                     com.uvpro.plugin.beacon.SmartBeaconSettingsDialog.show(
-                            getMapView().getContext(), null));
+                            getMapView().getContext(), () -> {
+                                appendLog("Smart beacon settings updated.");
+                                try {
+                                    AtakBroadcast.getInstance().sendBroadcast(
+                                            new Intent(UVProMapComponent.ACTION_BEACON_INTERVAL_CHANGED));
+                                } catch (Exception ignored) {
+                                }
+                            }));
         }
         if (btnManagePluginBeaconSettings != null) {
             btnManagePluginBeaconSettings.setOnClickListener(v -> showSettingsDialog());
@@ -408,6 +417,21 @@ public class UVProDropDownReceiver extends DropDownReceiver
 
         if (btnLoadSelectedRepeater != null) {
             btnLoadSelectedRepeater.setOnClickListener(v -> loadSelectedRepeaterToRadio());
+        }
+        if (btnRadioSilence != null) {
+            btnRadioSilence.setOnClickListener(v ->
+                    Toast.makeText(getMapView().getContext(),
+                            "Long press to toggle Radio Silence.",
+                            Toast.LENGTH_SHORT).show());
+            btnRadioSilence.setOnLongClickListener(v -> {
+                boolean enabled = !btManager.isRadioSilenceEnabled();
+                btManager.setRadioSilenceEnabled(enabled);
+                updateRadioSilenceButtonUi();
+                appendLog(enabled
+                        ? "Radio Silence ON: TX blocked (RX still active)."
+                        : "Radio Silence OFF: TX restored.");
+                return true;
+            });
         }
 
         if (btnRefreshChannels != null) {
@@ -729,6 +753,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
         if (!connected) {
             renderChannelGrid(null);
         }
+        updateRadioSilenceButtonUi();
     }
 
     private void updateContactCount() {
@@ -779,6 +804,23 @@ public class UVProDropDownReceiver extends DropDownReceiver
             }
         } catch (Exception ignored) {
         }
+        updateRadioSilenceButtonUi();
+    }
+
+    private void updateRadioSilenceButtonUi() {
+        if (btnRadioSilence == null) {
+            return;
+        }
+        boolean enabled = btManager.isRadioSilenceEnabled();
+        btnRadioSilence.setBackgroundTintList(null);
+        GradientDrawable bg = buildVfoButtonBackground(
+                0xFF607D8B,
+                enabled ? COLOR_EDIT_SELECTION_BORDER : 0x00000000,
+                enabled ? EDIT_SELECTION_STROKE_DP : 0);
+        btnRadioSilence.setBackground(bg);
+        btnRadioSilence.setText(enabled
+                ? "Long Press for Radio Silence (ACTIVE)"
+                : "Long Press for Radio Silence");
     }
 
     /** Dims the fixed-interval row when Smart Beacon controls the rate. */

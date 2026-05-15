@@ -37,6 +37,10 @@ public class SmartBeaconSettingsDialog {
                 "Min time between beacons when moving fast.",
                 String.valueOf(SmartBeacon.getFastRate(ctx)));
 
+        EditText etMinTurnTime   = addField(ctx, layout, "Min Turn Time (seconds)",
+                "Minimum delay between corner-pegging beacons.",
+                String.valueOf(SmartBeacon.getMinTurnTime(ctx)));
+
         EditText etTurnThreshold = addField(ctx, layout, "Turn Threshold (degrees)",
                 "Heading change needed to trigger an early beacon.",
                 String.valueOf(SmartBeacon.getTurnThreshold(ctx)));
@@ -54,6 +58,7 @@ public class SmartBeaconSettingsDialog {
                         int highSpeed     = parseInt(etHighSpeed,     SmartBeacon.DEFAULT_HIGH_SPEED);
                         int slowRate      = parseInt(etSlowRate,      SmartBeacon.DEFAULT_SLOW_RATE);
                         int fastRate      = parseInt(etFastRate,      SmartBeacon.DEFAULT_FAST_RATE);
+                        int minTurnTime   = parseInt(etMinTurnTime,   SmartBeacon.DEFAULT_MIN_TURN_TIME);
                         int turnThreshold = parseInt(etTurnThreshold, SmartBeacon.DEFAULT_TURN_THRESHOLD);
                         int turnSlope     = parseInt(etTurnSlope,     SmartBeacon.DEFAULT_TURN_SLOPE);
 
@@ -62,9 +67,12 @@ public class SmartBeaconSettingsDialog {
                         if (fastRate >= slowRate)  fastRate  = Math.max(1, slowRate / 2);
                         fastRate  = Math.max(1, fastRate);
                         slowRate  = Math.max(fastRate + 1, slowRate);
+                        minTurnTime = Math.max(1, minTurnTime);
+                        turnThreshold = Math.max(1, turnThreshold);
+                        turnSlope = Math.max(0, turnSlope);
 
                         SmartBeacon.saveAll(ctx, lowSpeed, highSpeed,
-                                slowRate, fastRate, turnThreshold, turnSlope);
+                                slowRate, fastRate, minTurnTime, turnThreshold, turnSlope);
 
                         if (onSaved != null) onSaved.run();
                     } catch (Exception ignored) {}
@@ -76,6 +84,7 @@ public class SmartBeaconSettingsDialog {
                             SmartBeacon.DEFAULT_HIGH_SPEED,
                             SmartBeacon.DEFAULT_SLOW_RATE,
                             SmartBeacon.DEFAULT_FAST_RATE,
+                            SmartBeacon.DEFAULT_MIN_TURN_TIME,
                             SmartBeacon.DEFAULT_TURN_THRESHOLD,
                             SmartBeacon.DEFAULT_TURN_SLOPE);
                     if (onSaved != null) onSaved.run();

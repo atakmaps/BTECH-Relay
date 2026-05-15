@@ -67,6 +67,7 @@ public class BtConnectionManager {
     private final AtomicBoolean connected = new AtomicBoolean(false);
     private final AtomicBoolean shouldReconnect = new AtomicBoolean(true);
     private final AtomicBoolean connecting = new AtomicBoolean(false);
+    private final AtomicBoolean radioSilenceEnabled = new AtomicBoolean(false);
     private final AtomicLong lastIoActivityMs = new AtomicLong(0L);
     private int reconnectAttempts = 0;
     private static final int MAX_RECONNECT_ATTEMPTS = 5;
@@ -379,6 +380,10 @@ public class BtConnectionManager {
             Log.w(TAG, "Cannot send: not connected");
             return false;
         }
+        if (radioSilenceEnabled.get()) {
+            Log.w(TAG, "TX blocked by Radio Silence");
+            return false;
+        }
 
         try {
             byte[] kissFrame = kissEncoder.encode(ax25Frame);
@@ -404,6 +409,10 @@ public class BtConnectionManager {
             Log.w(TAG, "Cannot send raw bytes: not connected");
             return false;
         }
+        if (radioSilenceEnabled.get()) {
+            Log.w(TAG, "Raw TX blocked by Radio Silence");
+            return false;
+        }
         try {
             outputStream.write(data);
             outputStream.flush();
@@ -415,6 +424,18 @@ public class BtConnectionManager {
             handleConnectionLost();
             return false;
         }
+    }
+
+    /**
+     * Radio Silence blocks all outbound RF/control traffic while still allowing receive.
+     */
+    public void setRadioSilenceEnabled(boolean enabled) {
+        radioSilenceEnabled.set(enabled);
+        Log.i(TAG, "Radio Silence " + (enabled ? "enabled" : "disabled"));
+    }
+
+    public boolean isRadioSilenceEnabled() {
+        return radioSilenceEnabled.get();
     }
 
     /**
