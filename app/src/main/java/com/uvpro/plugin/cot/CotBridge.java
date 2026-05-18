@@ -2,6 +2,7 @@ package com.uvpro.plugin.cot;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.BroadcastReceiver;
 import android.util.Log;
 
 import com.atakmap.android.contact.Contact;
@@ -58,6 +59,7 @@ public class CotBridge {
     private String localCallsign = "OPENRL";
     private EncryptionManager encryptionManager;
     private CommsMapComponent.PreSendProcessor preSendProcessor;
+    private BroadcastReceiver localCotBroadcastReceiver;
 
     /** Catches outbound GeoChat: ATAK sends via CotMapComponent external dispatcher, not PreSend. */
     private CommsLogger outboundCommsLogger;
@@ -83,6 +85,9 @@ public class CotBridge {
 
     /** Per-UID throttle map for SA Relay to prevent channel flooding */
     private final Map<String, Long> saRelayLastSentByUid = new ConcurrentHashMap<>();
+    /** Short de-dupe window so PreSend + COT_PLACED do not double-transmit the same event. */
+    private final Map<String, Long> recentLocalRelayKeys = new ConcurrentHashMap<>();
+    private static final long LOCAL_RELAY_DEDUPE_MS = 1500L;
 
     /**
      * Inbound network CoT types eligible for SA Relay (network → radio).
@@ -91,6 +96,7 @@ public class CotBridge {
     private static final java.util.regex.Pattern SA_RELAY_TYPE_PATTERN =
             java.util.regex.Pattern.compile(
                     "^(a-[a-z]-G|b-m-p|b-m-r)");
+    private static final String ALL_CHAT_ROOMS = "All Chat Rooms";
 
     /**
      * Read SA Relay preference from plugin SharedPreferences.
@@ -807,6 +813,25 @@ public class CotBridge {
             Log.e(TAG, "Failed to register CommsLogger", e);
         }
 
+        // Capture locally placed/edited/deleted CoT so RF-only nodes can propagate
+        // point updates/deletes without requiring manual "send again".
+        localCotBroadcastReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                maybeRelayLocalCotBroadcast(intent);
+            }
+        };
+        try {
+            AtakBroadcast.DocumentedIntentFilter cotFilter =
+                    new AtakBroadcast.DocumentedIntentFilter();
+            cotFilter.addAction("com.atakmap.android.maps.COT_PLACED");
+            cotFilter.addAction("com.atakmap.android.maps.COT_DELETED");
+            AtakBroadcast.getInstance().registerReceiver(localCotBroadcastReceiver, cotFilter);
+            Log.d(TAG, "Registered local COT_PLACED/COT_DELETED relay receiver");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to register local COT relay receiver", e);
+        }
+
         preSendProcessor = (event, toUIDs) -> {
             if (event == null) return;
 
@@ -953,7 +978,7 @@ public class CotBridge {
         if (btManager == null || !btManager.isConnected()) return;
 
         String type = event.getType();
-        if (type == null || !SA_RELAY_TYPE_PATTERN.matcher(type).find()) return;
+        if (!isSaRelayEligibleType(type)) return;
 
         String uid = event.getUID();
         if (uid == null) return;
@@ -972,8 +997,53 @@ public class CotBridge {
         if (lastRelay != null && (now - lastRelay) < SA_RELAY_INTERVAL_MS) return;
         saRelayLastSentByUid.put(uid, now);
 
+        if ("b-t-f".equals(type) && relayInboundNetworkGeoChatIfAllRooms(event)) {
+            return;
+        }
+
         Log.d(TAG, "SA Relay: broadcasting type=" + type + " uid=" + uid);
         new Thread(() -> sendCotOverRadio(event)).start();
+    }
+
+    private static boolean isSaRelayEligibleType(String type) {
+        if (type == null || type.isEmpty()) return false;
+        if ("b-t-f".equals(type)) return true;
+        return SA_RELAY_TYPE_PATTERN.matcher(type).find();
+    }
+
+    private boolean relayInboundNetworkGeoChatIfAllRooms(CotEvent event) {
+        if (event == null || chatBridge == null) return false;
+        if (!"b-t-f".equals(event.getType())) return false;
+        try {
+            com.atakmap.coremap.cot.event.CotDetail detail = event.getDetail();
+            if (detail == null) return false;
+
+            com.atakmap.coremap.cot.event.CotDetail remarks =
+                    detail.getFirstChildByName(0, "remarks");
+            String message = remarks != null ? remarks.getInnerText() : null;
+            if (message == null || message.trim().isEmpty()) return false;
+
+            com.atakmap.coremap.cot.event.CotDetail chat =
+                    detail.getFirstChildByName(0, "__chat");
+            if (chat == null) {
+                chat = detail.getFirstChildByName(0, "chat");
+            }
+            String room = chat != null ? chat.getAttribute("chatroom") : null;
+            if (room == null || room.trim().isEmpty()) {
+                room = ALL_CHAT_ROOMS;
+            }
+            if (!ALL_CHAT_ROOMS.equalsIgnoreCase(room.trim())) {
+                return false;
+            }
+
+            String lineUid = event.getUID();
+            Log.d(TAG, "SA Relay: forwarding network All Chat Rooms over RF uid=" + lineUid);
+            chatBridge.sendChatOverRadio(localCallsign, ALL_CHAT_ROOMS, message, lineUid);
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "SA Relay: failed forwarding network chat", e);
+            return false;
+        }
     }
 
     /**
@@ -1010,6 +1080,82 @@ public class CotBridge {
         } catch (Exception e) {
             Log.w(TAG, "RF -> TAK uplink failed: " + e.getMessage());
         }
+    }
+
+    private void maybeRelayLocalCotBroadcast(Intent intent) {
+        if (intent == null) return;
+        if (!relayOutgoingSa) return;
+        if (btManager == null || !btManager.isConnected()) return;
+
+        final String action = intent.getAction();
+        if (action == null) return;
+
+        String cotXml = intent.getStringExtra("xml");
+        if (cotXml == null || cotXml.isEmpty()) {
+            cotXml = intent.getStringExtra("cotXml");
+        }
+        if (cotXml == null || cotXml.isEmpty()) {
+            cotXml = intent.getStringExtra("cot");
+        }
+        if (cotXml == null || cotXml.isEmpty()) return;
+
+        CotEvent event;
+        try {
+            event = CotEvent.parse(cotXml);
+        } catch (Exception ignored) {
+            return;
+        }
+        if (event == null) return;
+        if (!shouldRelayLocalMapCot(event, action)) return;
+
+        String uid = event.getUID();
+        if (uid != null && shouldSkipOutboundRelayWasInboundInject(uid)) return;
+        if (isDuplicateLocalRelay(event)) return;
+
+        Log.d(TAG, "Local map CoT relay over RF: action=" + action
+                + " type=" + event.getType() + " uid=" + uid);
+        new Thread(() -> sendCotOverRadio(event)).start();
+    }
+
+    private boolean shouldRelayLocalMapCot(CotEvent event, String action) {
+        if (event == null) return false;
+        String type = event.getType();
+        if (type == null || type.isEmpty()) return false;
+
+        // Chat has its own dedicated compact relay path; avoid duplicate chat TX.
+        if ("b-t-f".equals(type) || "b-t-f-r".equals(type) || "b-t-f-d".equals(type)) {
+            return false;
+        }
+
+        // Skip local/self PLI updates; beacon path is authoritative.
+        String uid = event.getUID();
+        String localUid = null;
+        try { localUid = MapView.getDeviceUid(); } catch (Exception ignored) {}
+        if (uid != null && uid.equals(localUid) && type.startsWith("a-f-")) {
+            return false;
+        }
+
+        // Explicitly include point/route updates and delete tombstones.
+        return type.startsWith("b-m-p")
+                || type.startsWith("b-m-r")
+                || type.startsWith("a-f-")
+                || type.startsWith("u-")
+                || type.startsWith("t-x-d-d")
+                || "com.atakmap.android.maps.COT_DELETED".equals(action);
+    }
+
+    private boolean isDuplicateLocalRelay(CotEvent event) {
+        if (event == null) return true;
+        String uid = event.getUID();
+        String type = event.getType();
+        String key = (uid == null ? "nouid" : uid) + "|" + (type == null ? "notype" : type);
+        long now = System.currentTimeMillis();
+        Long until = recentLocalRelayKeys.get(key);
+        if (until != null && now < until) {
+            return true;
+        }
+        recentLocalRelayKeys.put(key, now + LOCAL_RELAY_DEDUPE_MS);
+        return false;
     }
 
     /**
@@ -1073,6 +1219,14 @@ public class CotBridge {
     public void dispose() {
         // Unregister PreSendProcessor — no unregister API, just null it out
         preSendProcessor = null;
+        if (localCotBroadcastReceiver != null) {
+            try {
+                AtakBroadcast.getInstance().unregisterReceiver(localCotBroadcastReceiver);
+            } catch (Exception e) {
+                Log.w(TAG, "unregister localCotBroadcastReceiver", e);
+            }
+            localCotBroadcastReceiver = null;
+        }
         if (outboundCommsLogger != null) {
             try {
                 CommsMapComponent.getInstance()
@@ -1085,6 +1239,7 @@ public class CotBridge {
         btechContactUids.clear();
         btechIdToUid.clear();
         saRelayLastSentByUid.clear();
+        recentLocalRelayKeys.clear();
         Log.d(TAG, "CotBridge disposed");
     }
 }
