@@ -9,9 +9,12 @@ import com.atakmap.android.contact.IpConnector;
 import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.MapView;
 
+import com.uvpro.plugin.aprs.AprsInfoFormatter;
+import com.uvpro.plugin.aprs.AprsTrackManager;
 import com.uvpro.plugin.ax25.Ax25Frame;
 import com.uvpro.plugin.ax25.AprsParser;
 import com.uvpro.plugin.ax25.AprsSymbolMapper;
+import com.uvpro.plugin.ax25.AprsWeatherParser;
 import com.uvpro.plugin.chat.ChatBridge;
 import com.uvpro.plugin.cot.CotBridge;
 import com.uvpro.plugin.util.CallsignUtil;
@@ -23,6 +26,7 @@ import com.uvpro.plugin.protocol.PacketFragmenter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Routes incoming packets to the appropriate handler based on their type.
@@ -33,8 +37,9 @@ import java.util.Locale;
  * 3. Routes to the appropriate handler (CoT bridge, chat bridge, contact tracker)
  *
  * For APRS packets (from standard APRS radios / BTECH native APRS):
- *   - Position reports → ContactTracker + CotBridge
- *   - Telemetry ({@code T#}…) → refresh marker at last fix + remarks when known
+ *   - Position reports → ContactTracker + CotBridge (APRS-101: comment tail → CoT remarks)
+ *   - Telemetry ({@code T#}…) → refresh marker at last fix + remarks when known (APRS-102:
+ *     telemetry-only reinject throttled per callsign)
  *   - Messages → ChatBridge
  *
  * For UV-PRO custom packets (from other UV-PRO plugins):
@@ -49,11 +54,27 @@ public class PacketRouter {
     private static final List<String> APRS_TEAM_POOL = Arrays.asList(
             "Red", "Orange", "Yellow", "Green", "Blue", "Purple", "Magenta", "White", "Cyan");
 
+    /**
+     * APRS-101: max chars from the APRS position comment tail into CoT {@code detail/remarks}
+     * inner text (ATAK/UI friendly).
+     */
+    private static final int APRS_POSITION_REMARK_MAX_CHARS = 512;
+
+    /**
+     * APRS-102: minimum time between telemetry-only position CoT reinjects for the same
+     * display callsign (same lat/lon; remarks refresh only).
+     */
+    private static final long APRS_TELEMETRY_REINJECT_MIN_MS = 30_000L;
+
+    private final ConcurrentHashMap<String, Long> aprsLastTelemetryReinjectMs =
+            new ConcurrentHashMap<>();
+
     private final CotBridge cotBridge;
     private final ChatBridge chatBridge;
     private final ContactTracker contactTracker;
     private final PacketFragmenter.Reassembler reassembler;
     private EncryptionManager encryptionManager;
+    private AprsTrackManager aprsTrackManager;
 
     /** Listener for packet count updates */
     private PacketCountListener packetCountListener;
@@ -68,6 +89,10 @@ public class PacketRouter {
         this.chatBridge = chatBridge;
         this.contactTracker = contactTracker;
         this.reassembler = new PacketFragmenter.Reassembler();
+    }
+
+    public void setAprsTrackManager(AprsTrackManager aprsTrackManager) {
+        this.aprsTrackManager = aprsTrackManager;
     }
 
     public void setPacketCountListener(PacketCountListener listener) {
@@ -262,16 +287,49 @@ public class PacketRouter {
                     + " table='" + pos.symbolTable + "'"
                     + " symbol='" + pos.symbol + "'"
                     + " iconsetpath=" + (iconsetPath != null ? iconsetPath : "<none>"));
+            double trackSpeed = pos.speed;
+            double trackCourse = pos.course;
+            if (AprsWeatherParser.shouldSuppressVehicleMotion(pos)) {
+                trackSpeed = -1;
+                trackCourse = -1;
+            }
             contactTracker.updateContact(mapCall, pos.latitude,
-                    pos.longitude, pos.altitude, pos.speed, pos.course, -1);
+                    pos.longitude, pos.altitude, trackSpeed, trackCourse, -1);
             RadioContact rcAprs = contactTracker.getContact(mapCall);
             if (rcAprs != null) {
                 rcAprs.setLastAprsMapSymbol(pos.symbolTable, pos.symbol);
+                rcAprs.setSource(RadioContact.ContactSource.APRS);
             }
             String aprsTeam = resolveSharedAprsTeamExcludingLocal();
+            // New position clears telemetry throttle so the next T# can refresh remarks immediately.
+            aprsLastTelemetryReinjectMs.remove(mapCall);
+            String positionRemarks = buildAprsPositionRemarks(pos);
             cotBridge.injectPositionCot(mapCall, pos.latitude,
-                    pos.longitude, pos.altitude, pos.speed, pos.course,
-                    aprsTeam, pos.symbolTable, pos.symbol);
+                    pos.longitude, pos.altitude, trackSpeed, trackCourse,
+                    aprsTeam, pos.symbolTable, pos.symbol, positionRemarks);
+
+            final String normalized = mapCall.trim().toUpperCase(Locale.US);
+            final String uid = "ANDROID-" + normalized;
+            String aprsDetails = AprsInfoFormatter.formatPosition(mapCall, pos);
+            if (rcAprs != null) {
+                aprsDetails = AprsInfoFormatter.withContactStats(aprsDetails, rcAprs);
+                rcAprs.setLastAprsDetailsText(aprsDetails);
+            }
+            cotBridge.setAprsMarkerDetails(uid, aprsDetails);
+            if (aprsTrackManager != null) {
+                aprsTrackManager.recordPosition(uid, mapCall, pos);
+            }
+            cotBridge.registerBtechContactUid(uid);
+            cotBridge.registerBtechContactId(normalized, uid);
+            String radioTrunc = CallsignUtil.toRadioCallsign(normalized);
+            if (radioTrunc != null && !radioTrunc.isEmpty()
+                    && !radioTrunc.equalsIgnoreCase(normalized)) {
+                cotBridge.registerBtechContactId(radioTrunc, uid);
+            }
+            MapView mv = MapView.getMapView();
+            if (mv != null) {
+                mv.post(() -> linkRadioIndividualContactToMapMarker(normalized, uid, 0));
+            }
             return;
         }
 
@@ -294,13 +352,28 @@ public class PacketRouter {
             if (c != null) {
                 contactTracker.touchIfPresent(mapCall);
                 if (c.hasPosition()) {
-                    Character symTab = c.getLastAprsSymbolTable();
-                    Character symCode = c.getLastAprsSymbolCode();
-                    String aprsTeam = resolveSharedAprsTeamExcludingLocal();
-                    cotBridge.injectPositionCot(mapCall, c.getLatitude(),
-                            c.getLongitude(), c.getAltitude(), c.getSpeed(),
-                            c.getCourse(), aprsTeam, symTab, symCode,
-                            telem.formatSummary());
+                    String telemSummary = telem.formatSummary();
+                    long now = System.currentTimeMillis();
+                    Long lastMs = aprsLastTelemetryReinjectMs.get(mapCall);
+                    if (lastMs != null && (now - lastMs) < APRS_TELEMETRY_REINJECT_MIN_MS) {
+                        Log.d(TAG, "APRS telemetry reinject throttled for " + mapCall
+                                + " (min interval " + (APRS_TELEMETRY_REINJECT_MIN_MS / 1000) + "s)");
+                    } else {
+                        Character symTab = c.getLastAprsSymbolTable();
+                        Character symCode = c.getLastAprsSymbolCode();
+                        String aprsTeam = resolveSharedAprsTeamExcludingLocal();
+                        cotBridge.injectPositionCot(mapCall, c.getLatitude(),
+                                c.getLongitude(), c.getAltitude(), c.getSpeed(),
+                                c.getCourse(), aprsTeam, symTab, symCode,
+                                telemSummary);
+                        String details = AprsInfoFormatter.withTelemetry(
+                                c.getLastAprsDetailsText(), telem);
+                        details = AprsInfoFormatter.withContactStats(details, c);
+                        c.setLastAprsDetailsText(details);
+                        cotBridge.setAprsMarkerDetails("ANDROID-" + mapCall.trim().toUpperCase(Locale.US),
+                                details);
+                        aprsLastTelemetryReinjectMs.put(mapCall, now);
+                    }
                 }
             }
             return;
@@ -324,6 +397,38 @@ public class PacketRouter {
             return b + "-" + ssid;
         }
         return b;
+    }
+
+    /** Prefer decoded WX readings for map remarks when present. */
+    private static String buildAprsPositionRemarks(AprsParser.AprsPosition pos) {
+        if (pos != null && pos.weather != null && pos.weather.hasAnyReading()) {
+            String wx = pos.weather.formatOneLine();
+            String tail = trimAprsCommentForRemarks(pos.comment);
+            if (wx != null && !wx.isEmpty()) {
+                if (tail != null && !tail.isEmpty()) {
+                    return wx + " — " + tail;
+                }
+                return wx;
+            }
+        }
+        return trimAprsCommentForRemarks(pos != null ? pos.comment : null);
+    }
+
+    /**
+     * APRS-101: trim and cap APRS position comment for CoT remarks inner text; null if empty.
+     */
+    private static String trimAprsCommentForRemarks(String comment) {
+        if (comment == null) {
+            return null;
+        }
+        String t = comment.trim().replace('\r', ' ').replace('\n', ' ');
+        if (t.isEmpty()) {
+            return null;
+        }
+        if (t.length() <= APRS_POSITION_REMARK_MAX_CHARS) {
+            return t;
+        }
+        return t.substring(0, APRS_POSITION_REMARK_MAX_CHARS) + "…";
     }
 
     private static String sanitizeInfoForLog(String input) {

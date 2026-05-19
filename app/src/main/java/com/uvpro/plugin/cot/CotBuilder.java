@@ -132,8 +132,10 @@ public class CotBuilder {
             iconsetPath = AprsSymbolMapper.iconsetPath(aprsSymbolTable, aprsSymbolCode);
         }
         if (iconsetPath != null) {
-            // APRS icon path drives visual identity; use neutral base type.
-            event.setType("a-u-G");
+            // APRS usericon supplies the bitmap; use friendly ground unit type so ATAK opens the
+            // full marker details (remarks, track, etc.). Generic a-u-G is treated as minimal UI
+            // (pinwheel only, no properties sheet).
+            event.setType("a-f-G-U-C");
         } else {
             event.setType((cotTypeOverride != null && !cotTypeOverride.trim().isEmpty())
                     ? cotTypeOverride.trim()
@@ -167,8 +169,9 @@ public class CotBuilder {
             detail.addChild(usericon);
         }
 
-        // Group/team tint can visually override generic fallback dots.
-        // For APRS custom icons, omit __group to avoid masking iconset issues with team color.
+        // APRS markers use usericon for the bitmap; omit __group so ATAK does not classify them
+        // as TAK server contacts (team meta). Otherwise "Details" routes to the greyed contact-card
+        // pinwheel path instead of CoT Info where remarks/comment text are shown.
         if (iconsetPath == null) {
             CotDetail group = new CotDetail("__group");
             group.setAttribute("name", teamColor != null ? teamColor : "Cyan");

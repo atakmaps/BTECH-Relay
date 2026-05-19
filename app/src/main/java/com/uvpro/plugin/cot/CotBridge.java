@@ -11,12 +11,14 @@ import com.atakmap.android.contact.IndividualContact;
 import com.atakmap.android.contact.PluginConnector;
 import com.atakmap.android.cot.CotMapComponent;
 import com.atakmap.android.ipc.AtakBroadcast;
+import com.atakmap.android.icons.UserIcon;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.comms.CommsLogger;
 import com.atakmap.comms.CommsMapComponent;
 import com.atakmap.coremap.cot.event.CotEvent;
 
 import com.uvpro.plugin.BuildConfig;
+import com.uvpro.plugin.ax25.AprsSymbolMapper;
 import com.uvpro.plugin.ax25.Ax25Frame;
 import com.uvpro.plugin.beacon.SmartBeacon;
 import com.uvpro.plugin.bluetooth.BtConnectionManager;
@@ -47,6 +49,16 @@ import java.util.Map;
 public class CotBridge {
 
     private static final String TAG = "UVPro.CotBridge";
+
+    /** Same action as ATAK radial menu {@code actions/showdetails.xml}. */
+    public static final String ACTION_COT_MARKER_DETAILS =
+            "com.atakmap.android.cotdetails.COTINFO";
+
+    /** Set on map items created from inbound APRS position reports. */
+    public static final String META_UVPRO_APRS = "uvpro_aprs";
+
+    /** Multi-line APRS packet metadata for {@link com.uvpro.plugin.aprs.AprsDetailsDropDownReceiver}. */
+    public static final String META_UVPRO_APRS_DETAILS = "uvpro_aprs_details";
     private static final long STALE_GRACE_MS = 30_000L;
     private static final long MIN_CONTACT_STALE_MS = 60_000L;
     /** Inbound APRS / radio peers: ATAK uses CoT stale as marker TTL; keep ≥ 2h for sparse beacons. */
@@ -735,6 +747,135 @@ public class CotBridge {
     }
 
     /**
+     * True for map markers injected from inbound APRS (see {@link #META_UVPRO_APRS}).
+     */
+    public static boolean isUvproAprsMarker(com.atakmap.android.maps.MapItem item) {
+        return item != null && item.getMetaBoolean(META_UVPRO_APRS, false);
+    }
+
+    /**
+     * Opens the APRS metadata panel (packet comment, symbol, telemetry — not generic CoT point UI).
+     */
+    public void openAprsDetailsPanel(com.atakmap.android.maps.MapItem item) {
+        if (item == null || this.mapView == null) {
+            return;
+        }
+        final String uid = item.getUID();
+        Runnable open = () -> {
+            try {
+                Intent details = new Intent(
+                        com.uvpro.plugin.aprs.AprsDetailsDropDownReceiver.SHOW_APRS_DETAILS);
+                details.putExtra(
+                        com.uvpro.plugin.aprs.AprsDetailsDropDownReceiver.EXTRA_TARGET_UID, uid);
+                AtakBroadcast.getInstance().sendBroadcast(details);
+                AtakBroadcast.getInstance().sendBroadcast(
+                        new Intent("com.atakmap.android.maps.HIDE_MENU"));
+                Log.d(TAG, "Opened APRS details panel uid=" + uid);
+            } catch (Exception e) {
+                Log.w(TAG, "openAprsDetailsPanel failed uid=" + uid, e);
+            }
+        };
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            open.run();
+        } else {
+            this.mapView.post(open);
+        }
+    }
+
+    /**
+     * Store formatted APRS metadata on the map marker for the details panel.
+     */
+    public void setAprsMarkerDetails(String uid, String detailsText) {
+        if (uid == null || uid.isEmpty() || this.mapView == null) {
+            return;
+        }
+        Runnable apply = () -> {
+            try {
+                com.atakmap.android.maps.MapItem item =
+                        this.mapView.getRootGroup().deepFindUID(uid);
+                if (item != null) {
+                    item.setMetaBoolean(META_UVPRO_APRS, true);
+                    if (detailsText != null && !detailsText.trim().isEmpty()) {
+                        item.setMetaString(META_UVPRO_APRS_DETAILS, detailsText.trim());
+                    }
+                    Intent refresh = new Intent(
+                            com.uvpro.plugin.aprs.AprsDetailsDropDownReceiver.REFRESH_APRS_DETAILS);
+                    refresh.putExtra(
+                            com.uvpro.plugin.aprs.AprsDetailsDropDownReceiver.EXTRA_TARGET_UID, uid);
+                    AtakBroadcast.getInstance().sendBroadcast(refresh);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "setAprsMarkerDetails failed uid=" + uid, e);
+            }
+            markAprsMapItem(uid);
+        };
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            apply.run();
+        } else {
+            this.mapView.post(apply);
+        }
+    }
+
+    /**
+     * Tag a marker as UV-PRO APRS (call after position inject when iconset may be absent).
+     */
+    public void markAprsMapItem(String uid) {
+        if (uid == null || uid.isEmpty() || this.mapView == null) {
+            return;
+        }
+        Runnable tag = () -> {
+            try {
+                com.atakmap.android.maps.MapItem item =
+                        this.mapView.getRootGroup().deepFindUID(uid);
+                if (item != null) {
+                    item.setMetaBoolean(META_UVPRO_APRS, true);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "markAprsMapItem failed uid=" + uid, e);
+            }
+            applyAprsMarkerPresentation(uid);
+        };
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            tag.run();
+        } else {
+            this.mapView.post(tag);
+        }
+    }
+
+    /**
+     * After CoT import: APRS usericon markers get label bounds and a minimal pinwheel whose
+     * Details action opens CoT Info (remarks), not the TAK contact-card menu.
+     */
+    private void applyAprsMarkerPresentation(String uid) {
+        if (uid == null || uid.isEmpty() || this.mapView == null) {
+            return;
+        }
+        try {
+            com.atakmap.android.maps.MapItem item =
+                    this.mapView.getRootGroup().deepFindUID(uid);
+            if (!(item instanceof com.atakmap.android.maps.Marker)) {
+                return;
+            }
+            String iconPath = item.getMetaString(UserIcon.IconsetPath, "");
+            boolean aprs = item.getMetaBoolean(META_UVPRO_APRS, false)
+                    || (!iconPath.isEmpty()
+                    && iconPath.startsWith(AprsSymbolMapper.ICONSET_UID));
+            if (!aprs) {
+                return;
+            }
+            item.setMetaBoolean(META_UVPRO_APRS, true);
+            com.atakmap.android.maps.Marker marker =
+                    (com.atakmap.android.maps.Marker) item;
+            marker.setShowLabel(true);
+            marker.setMinLabelRenderResolution(0.0d);
+            marker.setMaxLabelRenderResolution(0.1d);
+            marker.setMetaString("menu", "menus/default_item_w_type.xml");
+        } catch (Exception e) {
+            Log.w(TAG, "applyAprsMarkerPresentation failed uid=" + uid, e);
+        }
+    }
+
+    /**
      * Dispatch a CotEvent into ATAK's internal processing.
      */
     private void dispatchCotEvent(CotEvent event) {
@@ -742,6 +883,7 @@ public class CotBridge {
         try {
             CotMapComponent.getInternalDispatcher().dispatch(event);
             Log.d(TAG, "Dispatched CoT event: " + event.getUID());
+            applyAprsMarkerPresentation(event.getUID());
 
             if (BuildConfig.DEBUG) {
                 try {
@@ -757,23 +899,11 @@ public class CotBridge {
                                 + " callsign=" + item.getMetaString("callsign", "NULL")
                                 + " team=" + item.getMetaString("team", "NULL")
                                 + " labels_on=" + item.hasMetaValue("labels_on")
-                                + " hideLabel=" + item.hasMetaValue("hideLabel"));
+                                + " hideLabel=" + item.hasMetaValue("hideLabel")
+                                + " menu=" + item.getMetaString("menu", "NULL"));
 
                         if (item instanceof com.atakmap.android.maps.Marker) {
                             Log.d(TAG, "MARKER_DEBUG marker_class=true");
-                            // Pull APRS label closer to the symbol by tightening marker bounds.
-                            // ATAK uses marker geometry to place labels; this is more reliable than
-                            // trying to alter transparent PNG padding.
-                            if ("a-u-G".equals(item.getType())) {
-                                com.atakmap.android.maps.Marker marker =
-                                        (com.atakmap.android.maps.Marker) item;
-                                marker.setShowLabel(true);
-                                // Avoid large icon/label separation when zoomed far out by
-                                // suppressing APRS callsigns at coarse map resolutions.
-                                marker.setMinLabelRenderResolution(0.0d);
-                                // ~0.1 m/px ~= ~100 m total width on a ~1080 px display.
-                                marker.setMaxLabelRenderResolution(0.1d);
-                            }
                         }
                     } else {
                         Log.d(TAG, "MARKER_DEBUG item not found uid=" + event.getUID());

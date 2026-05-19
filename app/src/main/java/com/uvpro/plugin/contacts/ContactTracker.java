@@ -4,6 +4,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
+import com.uvpro.plugin.aprs.AprsTrackManager;
 import com.uvpro.plugin.cot.CotBridge;
 
 import java.util.Collection;
@@ -40,6 +41,7 @@ public class ContactTracker {
     private final CotBridge cotBridge;
     private final Handler handler;
     private boolean running = false;
+    private AprsTrackManager aprsTrackManager;
 
     /** Listener for contact updates */
     public interface ContactListener {
@@ -57,6 +59,10 @@ public class ContactTracker {
 
     public void setListener(ContactListener listener) {
         this.listener = listener;
+    }
+
+    public void setAprsTrackManager(AprsTrackManager aprsTrackManager) {
+        this.aprsTrackManager = aprsTrackManager;
     }
 
     /**
@@ -240,6 +246,9 @@ public class ContactTracker {
     }
 
     private void notifyContactRemoved(RadioContact contact) {
+        if (aprsTrackManager != null && contact != null) {
+            aprsTrackManager.removeTrack("ANDROID-" + normalizeCallsign(contact.getCallsign()));
+        }
         if (listener != null) {
             handler.post(() -> listener.onContactRemoved(contact));
         }

@@ -13,6 +13,7 @@ import android.util.Log;
 import com.atakmap.android.dropdown.DropDownMapComponent;
 import com.atakmap.android.ipc.AtakBroadcast;
 import com.uvpro.plugin.beacon.SmartBeacon;
+import com.atakmap.android.maps.MapItem;
 import com.atakmap.android.maps.MapView;
 import com.atakmap.android.maps.PointMapItem;
 import com.atakmap.android.maps.MapEvent;
@@ -31,6 +32,8 @@ import com.uvpro.plugin.protocol.PacketRouter;
 import com.uvpro.plugin.radio.UVProRadioControlManager;
 import com.uvpro.plugin.ui.RadioStatusOverlay;
 import com.uvpro.plugin.ui.SettingsFragment;
+import com.uvpro.plugin.aprs.AprsDetailsDropDownReceiver;
+import com.uvpro.plugin.aprs.AprsTrackManager;
 import com.uvpro.plugin.ax25.AprsIconsetInstaller;
 
 /**
@@ -108,6 +111,8 @@ public class UVProMapComponent extends DropDownMapComponent {
     private ChatBridge chatBridge;
     private ContactTracker contactTracker;
     private UVProDropDownReceiver dropDownReceiver;
+    private AprsDetailsDropDownReceiver aprsDetailsDropDownReceiver;
+    private AprsTrackManager aprsTrackManager;
     private EncryptionManager encryptionManager;
     private UVProRadioControlManager radioControlManager;
     private MapEventDispatcher.MapEventDispatchListener mapItemClickListener;
@@ -214,6 +219,9 @@ try {
         // 4. PacketRouter (needs CotBridge, ChatBridge, ContactTracker)
         packetRouter = new PacketRouter(cotBridge, chatBridge, contactTracker);
         packetRouter.setEncryptionManager(encryptionManager);
+        aprsTrackManager = new AprsTrackManager(view);
+        packetRouter.setAprsTrackManager(aprsTrackManager);
+        contactTracker.setAprsTrackManager(aprsTrackManager);
 
         // 5. BtConnectionManager (needs context + PacketRouter)
         btConnectionManager = new BtConnectionManager(context, packetRouter);
@@ -272,36 +280,55 @@ try {
         filter.addAction(UVProDropDownReceiver.SHOW_PLUGIN_CHANNEL_CONTROL);
         registerDropDownReceiver(dropDownReceiver, filter);
 
-        // Track selected repeater markers from map taps.
+        aprsDetailsDropDownReceiver = new AprsDetailsDropDownReceiver(
+                view, context, contactTracker);
+        AtakBroadcast.DocumentedIntentFilter aprsDetailsFilter =
+                new AtakBroadcast.DocumentedIntentFilter();
+        aprsDetailsFilter.addAction(AprsDetailsDropDownReceiver.SHOW_APRS_DETAILS);
+        aprsDetailsFilter.addAction(AprsDetailsDropDownReceiver.REFRESH_APRS_DETAILS);
+        registerDropDownReceiver(aprsDetailsDropDownReceiver, aprsDetailsFilter);
+
+        // Repeater selection + APRS marker tap → APRS metadata panel.
         mapItemClickListener = event -> {
             if (event == null || !MapEvent.ITEM_CLICK.equals(event.getType())) {
                 return;
             }
-            if (event.getItem() == null || radioControlManager == null) {
+            MapItem item = event.getItem();
+            if (item == null) {
                 return;
             }
-            UVProRadioControlManager.RepeaterSpec before =
-                    radioControlManager.getSelectedRepeater();
-            radioControlManager.onMapItemClicked(event.getItem());
-            UVProRadioControlManager.RepeaterSpec selected =
-                    radioControlManager.getSelectedRepeater();
-            boolean newlySelected = false;
-            if (selected != null) {
-                if (before == null) {
-                    newlySelected = true;
-                } else if (selected.sourceUid != null && before.sourceUid != null) {
-                    newlySelected = !selected.sourceUid.equals(before.sourceUid);
-                } else {
-                    newlySelected = selected != before;
+
+            boolean handledRepeater = false;
+            if (radioControlManager != null) {
+                UVProRadioControlManager.RepeaterSpec before =
+                        radioControlManager.getSelectedRepeater();
+                radioControlManager.onMapItemClicked(item);
+                UVProRadioControlManager.RepeaterSpec selected =
+                        radioControlManager.getSelectedRepeater();
+                boolean newlySelected = false;
+                if (selected != null) {
+                    if (before == null) {
+                        newlySelected = true;
+                    } else if (selected.sourceUid != null && before.sourceUid != null) {
+                        newlySelected = !selected.sourceUid.equals(before.sourceUid);
+                    } else {
+                        newlySelected = selected != before;
+                    }
+                }
+                if (newlySelected) {
+                    handledRepeater = true;
+                    try {
+                        AtakBroadcast.getInstance().sendBroadcast(
+                                new Intent(UVProDropDownReceiver.SHOW_PLUGIN_CHANNEL_CONTROL));
+                    } catch (Exception e) {
+                        Log.w(TAG, "Could not auto-open UV-PRO on repeater select", e);
+                    }
                 }
             }
-            if (newlySelected) {
-                try {
-                    AtakBroadcast.getInstance().sendBroadcast(
-                            new Intent(UVProDropDownReceiver.SHOW_PLUGIN_CHANNEL_CONTROL));
-                } catch (Exception e) {
-                    Log.w(TAG, "Could not auto-open UV-PRO on repeater select", e);
-                }
+
+            if (!handledRepeater && cotBridge != null
+                    && CotBridge.isUvproAprsMarker(item)) {
+                cotBridge.openAprsDetailsPanel(item);
             }
         };
         view.getMapEventDispatcher().addMapEventListener(

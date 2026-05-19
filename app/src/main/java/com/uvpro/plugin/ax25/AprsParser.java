@@ -49,6 +49,8 @@ public class AprsParser {
         public String comment;     // APRS comment field
         public char symbol;        // APRS symbol character
         public char symbolTable;   // APRS symbol table ('/' or '\\')
+        /** Populated for {@code _} weather stations and comment weather tails. */
+        public AprsWeather weather;
     }
 
     /**
@@ -171,19 +173,19 @@ public class AprsParser {
                 if (dst6 == null) {
                     return null;
                 }
-                return parseMicE(callsign, ssid, dst6, info.substring(1));
+                return finish(parseMicE(callsign, ssid, dst6, info.substring(1)));
             }
             if (dataType == ';') {
-                return parseObjectPosition(info);
+                return finish(parseObjectPosition(info));
             }
             switch (dataType) {
                 case '!':
                 case '=':
-                    return parseAfterDataType(callsign, ssid, info, 1);
+                    return finish(parseAfterDataType(callsign, ssid, info, 1));
                 case '/':
                 case '@':
                     if (info.length() > 8) {
-                        return parseAfterDataType(callsign, ssid, info, 8);
+                        return finish(parseAfterDataType(callsign, ssid, info, 8));
                     }
                     break;
                 case ':':
@@ -199,6 +201,11 @@ public class AprsParser {
             Log.w(TAG, "Failed to parse APRS position: " + e.getMessage());
         }
         return null;
+    }
+
+    private static AprsPosition finish(AprsPosition pos) {
+        AprsWeatherParser.enrichPosition(pos);
+        return pos;
     }
 
     /**
@@ -319,7 +326,7 @@ public class AprsParser {
         if (c1 >= 0 && s1 >= 0) {
             if ((ctype & 0x18) == 0x10) {
                 pos.altitude = (Math.pow(1.002, c1 * 91 + s1)) * 0.3048;
-            } else if (c1 <= 89) {
+            } else if (!AprsWeatherParser.isWeatherSymbol(pos.symbolTable, pos.symbol) && c1 <= 89) {
                 pos.course = (c1 == 0) ? 360 : c1 * 4;
                 double speedKmh = (Math.pow(1.08, s1) - 1.0) * 1.852;
                 pos.speed = speedKmh / 3.6;
@@ -462,8 +469,10 @@ public class AprsParser {
             if (cr >= 400) {
                 cr -= 400;
             }
-            pos.speed = sp * 1.852 / 3.6;
-            pos.course = cr;
+            if (!AprsWeatherParser.isWeatherSymbol(pos.symbolTable, pos.symbol)) {
+                pos.speed = sp * 1.852 / 3.6;
+                pos.course = cr;
+            }
 
             if (body.length() > 8) {
                 pos.comment = body.substring(8);
@@ -512,10 +521,12 @@ public class AprsParser {
         pos.symbolTable = symTable;
         pos.symbol = symChar;
 
-        // Parse optional course/speed after position
+        // Parse optional course/speed after position (not on WX '_' symbols; see AprsWeatherParser)
         if (info.length() > offset + 19) {
             String extra = info.substring(offset + 19);
-            parseCourseSpeed(pos, extra);
+            if (!AprsWeatherParser.isWeatherSymbol(symTable, symChar)) {
+                parseCourseSpeed(pos, extra);
+            }
             // Look for altitude in comments /A=NNNNNN
             int altIdx = extra.indexOf("/A=");
             if (altIdx >= 0 && extra.length() >= altIdx + 9) {

@@ -44,6 +44,9 @@ public class RadioContact {
     private Character lastAprsSymbolTable;
     private Character lastAprsSymbolCode;
 
+    /** Formatted APRS packet metadata for the APRS details panel. */
+    private String lastAprsDetailsText;
+
     public enum ContactStatus {
         /** Actively reporting */
         ACTIVE,
@@ -98,6 +101,8 @@ public class RadioContact {
 
     public Character getLastAprsSymbolCode() { return lastAprsSymbolCode; }
 
+    public String getLastAprsDetailsText() { return lastAprsDetailsText; }
+
     // --- Setters ---
 
     public void setLatitude(double latitude) { this.latitude = latitude; }
@@ -115,6 +120,10 @@ public class RadioContact {
     public void setLastAprsMapSymbol(Character table, Character code) {
         this.lastAprsSymbolTable = table;
         this.lastAprsSymbolCode = code;
+    }
+
+    public void setLastAprsDetailsText(String text) {
+        this.lastAprsDetailsText = text;
     }
 
     /**
