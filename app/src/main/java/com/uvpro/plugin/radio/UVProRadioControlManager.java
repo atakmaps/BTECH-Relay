@@ -105,12 +105,15 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
         public final int txChannelId;
         public final int digitalChannelId;
         public final int currentChannelId;
+        /** Receive S-meter from GET_HT_STATUS (0-15), or -1 if unavailable. */
+        public final int receiveRssi;
         public final ChannelSummary[] channels;
 
         public RadioControlSnapshot(int channelA, int channelB, boolean dualWatchEnabled,
                                     boolean activeVfoB,
                                     int txChannelId, int digitalChannelId,
-                                    int currentChannelId, ChannelSummary[] channels) {
+                                    int currentChannelId, int receiveRssi,
+                                    ChannelSummary[] channels) {
             this.channelA = channelA;
             this.channelB = channelB;
             this.dualWatchEnabled = dualWatchEnabled;
@@ -118,6 +121,7 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
             this.txChannelId = txChannelId;
             this.digitalChannelId = digitalChannelId;
             this.currentChannelId = currentChannelId;
+            this.receiveRssi = receiveRssi;
             this.channels = channels;
         }
     }
@@ -352,12 +356,14 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
                     ? settingsState.channelB
                     : settingsState.channelA;
             int currentChannel = settingsState.channelA;
+            int receiveRssi = -1;
             CommandReply htStatusReply = sendCommandSync(
                     BASIC_GROUP, CMD_GET_HT_STATUS, new byte[0], 2500);
             if (htStatusReply != null && htStatusReply.status == STATUS_SUCCESS
                     && htStatusReply.payload != null && htStatusReply.payload.length >= 2) {
                 int parsedCurrent = parseCurrentChannelIdFromHtStatus(htStatusReply.payload);
                 htChannelType = parseChannelTypeFromHtStatus(htStatusReply.payload);
+                receiveRssi = parseReceiveRssiFromHtStatus(htStatusReply.payload);
                 if (htChannelType == 1) {
                     activeVfoB = false;
                 } else if (htChannelType == 2) {
@@ -406,7 +412,8 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
                     + " chB=" + channelB
                     + " tx=" + txChannel
                     + " digital=" + digitalChannel
-                    + " current=" + currentChannel);
+                    + " current=" + currentChannel
+                    + " rxRssi=" + receiveRssi);
 
             return new RadioControlSnapshot(
                     channelA,
@@ -416,6 +423,7 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
                     txChannel,
                     digitalChannel,
                     currentChannel,
+                    receiveRssi,
                     channels
             );
         } catch (InterruptedException e) {
@@ -450,12 +458,14 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
                     ? settingsState.channelB
                     : settingsState.channelA;
             int currentChannel = settingsState.channelA;
+            int receiveRssi = -1;
             CommandReply htStatusReply = sendCommandSync(
                     BASIC_GROUP, CMD_GET_HT_STATUS, new byte[0], 2500);
             if (htStatusReply != null && htStatusReply.status == STATUS_SUCCESS
                     && htStatusReply.payload != null && htStatusReply.payload.length >= 2) {
                 int parsedCurrent = parseCurrentChannelIdFromHtStatus(htStatusReply.payload);
                 htChannelType = parseChannelTypeFromHtStatus(htStatusReply.payload);
+                receiveRssi = parseReceiveRssiFromHtStatus(htStatusReply.payload);
                 if (htChannelType == 1) {
                     activeVfoB = false;
                 } else if (htChannelType == 2) {
@@ -499,7 +509,8 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
                     + " chB=" + channelB
                     + " tx=" + txChannel
                     + " digital=" + digitalChannel
-                    + " current=" + currentChannel);
+                    + " current=" + currentChannel
+                    + " rxRssi=" + receiveRssi);
 
             return new RadioControlSnapshot(
                     channelA,
@@ -509,6 +520,7 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
                     txChannel,
                     digitalChannel,
                     currentChannel,
+                    receiveRssi,
                     channels
             );
         } catch (InterruptedException e) {
@@ -1416,6 +1428,17 @@ public class UVProRadioControlManager implements BtConnectionManager.RawDataList
             return -1;
         }
         return (payload[0] & 0x0C) >> 2;
+    }
+
+    /**
+     * Receive S-meter level from GET_HT_STATUS extended payload (0-15).
+     * Matches HT Commander: upper nibble of status byte index 2.
+     */
+    private static int parseReceiveRssiFromHtStatus(byte[] payload) {
+        if (payload == null || payload.length < 3) {
+            return -1;
+        }
+        return (payload[2] >> 4) & 0x0F;
     }
 
     private static ChannelSummary parseChannelSummary(byte[] payload, int fallbackChannelId) {

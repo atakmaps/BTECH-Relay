@@ -337,6 +337,17 @@
                 android:textStyle="bold"
                 android:paddingBottom="4dp" />
 
+            <Button
+                android:id="@+id/btn_send_beacon"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="8dp"
+                android:text="Send Beacon"
+                android:textSize="12sp"
+                android:textColor="#FFFFFFFF"
+                android:minHeight="40dp"
+                android:backgroundTint="#FF455A64" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -463,11 +474,47 @@
                 android:textStyle="bold"
                 android:paddingBottom="4dp" />
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Selected Repeater"
+                android:textColor="#FFAAAAAA"
+                android:textSize="11sp"
+                android:paddingTop="4dp" />
+
+            <TextView
+                android:id="@+id/text_selected_repeater"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="None selected"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp"
+                android:paddingTop="2dp"
+                android:paddingBottom="6dp" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center_vertical">
+                android:paddingBottom="8dp">
+
+                <Button
+                    android:id="@+id/btn_load_selected_repeater"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:text="Load Selected Repeater"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFFFF"
+                    android:enabled="false"
+                    android:backgroundTint="#FF607D8B" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingBottom="4dp">
 
                 <View
                     android:layout_width="0dp"
@@ -498,58 +545,89 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:paddingBottom="8dp">
+                android:gravity="center_vertical"
+                android:paddingTop="4dp"
+                android:paddingBottom="2dp">
 
-                <Button
-                    android:id="@+id/btn_load_selected_repeater"
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:text="Load Selected Repeater"
-                    android:textSize="16sp"
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="RX Signal:"
+                    android:textColor="#FFAAAAAA"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/text_receive_rssi"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="—"
                     android:textColor="#FFFFFFFF"
-                    android:enabled="false"
-                    android:backgroundTint="#FF607D8B" />
+                    android:textSize="13sp"
+                    android:minWidth="48dp"
+                    android:gravity="end" />
             </LinearLayout>
 
-            <TextView
+            <LinearLayout
+                android:id="@+id/rssi_meter_block"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Selected Repeater"
-                android:textColor="#FFAAAAAA"
-                android:textSize="11sp" />
+                android:orientation="vertical"
+                android:layout_marginBottom="6dp"
+                android:visibility="gone">
 
-            <TextView
-                android:id="@+id/text_selected_repeater"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="None selected"
-                android:textColor="#FFFFFFFF"
-                android:textSize="12sp"
-                android:paddingTop="2dp"
-                android:paddingBottom="6dp" />
+                <FrameLayout
+                    android:id="@+id/frame_receive_rssi"
+                    android:layout_width="match_parent"
+                    android:layout_height="18dp">
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/rssi_meter_track" />
+
+                    <View
+                        android:id="@+id/view_receive_rssi_fill_green"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FF4CAF50" />
+
+                    <View
+                        android:id="@+id/view_receive_rssi_fill_red"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FFF44336"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <FrameLayout
+                    android:id="@+id/frame_receive_rssi_scale"
+                    android:layout_width="match_parent"
+                    android:layout_height="24dp"
+                    android:layout_marginTop="3dp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
+                android:gravity="center_vertical"
                 android:paddingBottom="4dp">
 
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <LinearLayout
+                <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center_horizontal">
+                    android:text="Long press for TX"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="13sp"
+                    android:gravity="start|center_vertical" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
 
                     <Switch
                         android:id="@+id/switch_digital_edit"
@@ -560,37 +638,15 @@
                         android:textColor="#FFFFFFFF"
                         android:switchMinWidth="56dp"
                         android:contentDescription="Enable digital channel editing" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="Enable Digital Edit"
+                        android:textColor="#FFFFFFFF"
+                        android:textSize="13sp" />
                 </LinearLayout>
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingBottom="4dp">
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="2"
-                    android:text="Long press for TX"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="17sp"
-                    android:gravity="center_horizontal" />
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1" />
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="Enable Digital Edit"
-                    android:textColor="#FFFFFFFF"
-                    android:textSize="13sp"
-                    android:gravity="center_horizontal" />
             </LinearLayout>
 
             <LinearLayout
@@ -663,32 +719,15 @@
                 android:textStyle="bold"
                 android:paddingBottom="4dp" />
 
-            <LinearLayout
+            <Button
+                android:id="@+id/btn_settings"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btn_send_beacon"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:text="Send Beacon"
-                    android:textSize="11sp"
-                    android:textColor="#FFFFFFFF"
-                    android:layout_marginEnd="4dp"
-                    android:backgroundTint="#FF455A64" />
-
-                <Button
-                    android:id="@+id/btn_settings"
-                    android:layout_width="0dp"
-                    android:layout_height="40dp"
-                    android:layout_weight="1"
-                    android:text="Settings"
-                    android:textSize="11sp"
-                    android:textColor="#FFFFFFFF"
-                    android:backgroundTint="#FF455A64" />
-            </LinearLayout>
+                android:text="Settings"
+                android:textSize="12sp"
+                android:textColor="#FFFFFFFF"
+                android:minHeight="40dp"
+                android:backgroundTint="#FF455A64" />
         </LinearLayout>
 
         <!-- ==================== LOG ==================== -->

@@ -116,6 +116,18 @@ public class UVProDropDownReceiver extends DropDownReceiver
     private TextView callsignText;
     private TextView contactsText;
     private TextView packetsText;
+    private TextView receiveRssiText;
+    private View receiveRssiMeterBlock;
+    private View receiveRssiMeterFrame;
+    private View receiveRssiFillGreen;
+    private View receiveRssiFillRed;
+    private android.widget.FrameLayout receiveRssiScaleFrame;
+    private boolean receiveRssiScaleBuilt;
+
+    private static final int RSSI_SCALE_MAX = 12;
+    private static final int[] RSSI_SCALE_TICKS = {1, 2, 4, 6, 8, 10, 11, 12};
+    private static final int[] RSSI_SCALE_LABEL_POS = {3, 5, 7, 9};
+    private static final String[] RSSI_SCALE_LABELS = {"3", "5", "7", "9"};
     private TextView logText;
     private TextView encryptionStatusText;
     private TextView beaconIntervalText;
@@ -307,6 +319,13 @@ public class UVProDropDownReceiver extends DropDownReceiver
         callsignText = rootView.findViewById(getId("text_callsign"));
         contactsText = rootView.findViewById(getId("text_contacts"));
         packetsText = rootView.findViewById(getId("text_packets"));
+        receiveRssiText = rootView.findViewById(getId("text_receive_rssi"));
+        receiveRssiMeterBlock = rootView.findViewById(getId("rssi_meter_block"));
+        receiveRssiMeterFrame = rootView.findViewById(getId("frame_receive_rssi"));
+        receiveRssiFillGreen = rootView.findViewById(getId("view_receive_rssi_fill_green"));
+        receiveRssiFillRed = rootView.findViewById(getId("view_receive_rssi_fill_red"));
+        receiveRssiScaleFrame = rootView.findViewById(getId("frame_receive_rssi_scale"));
+        ensureReceiveRssiScaleMarks();
         logText = rootView.findViewById(getId("text_log"));
         encryptionStatusText = rootView.findViewById(getId("text_encryption_status"));
         beaconIntervalText = rootView.findViewById(getId("text_beacon_interval"));
@@ -770,6 +789,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
         updateScanButtonText();
         if (!connected) {
             renderChannelGrid(null);
+            updateReceiveRssiUi(-1);
         }
         updateRadioSilenceButtonUi();
     }
@@ -786,6 +806,151 @@ public class UVProDropDownReceiver extends DropDownReceiver
         if (packetsText != null) {
             packetsText.setText(txCount + " / " + rxCount);
         }
+    }
+
+    /** Receive S-meter from radio GET_HT_STATUS (0-15); -1 when unknown/disconnected. */
+    private void updateReceiveRssiUi(int receiveRssi) {
+        if (receiveRssiText == null) {
+            return;
+        }
+        boolean connected = btManager != null && btManager.isConnected();
+        if (!connected || receiveRssi < 0) {
+            receiveRssiText.setText("—");
+            if (receiveRssiMeterBlock != null) {
+                receiveRssiMeterBlock.setVisibility(View.GONE);
+            }
+            return;
+        }
+        final int scaleLevel = mapReceiveRssiToScale(receiveRssi);
+        receiveRssiText.setText(String.format(Locale.US, "%d / %d", scaleLevel, RSSI_SCALE_MAX));
+        if (receiveRssiMeterBlock != null && receiveRssiMeterFrame != null
+                && receiveRssiFillGreen != null && receiveRssiFillRed != null) {
+            receiveRssiMeterBlock.setVisibility(View.VISIBLE);
+            receiveRssiMeterBlock.post(() -> {
+                applyReceiveRssiFillWidth(scaleLevel);
+                layoutReceiveRssiScale();
+            });
+        }
+    }
+
+    /** Map radio RSSI (0-15) to on-screen S-scale (0-12). */
+    private static int mapReceiveRssiToScale(int receiveRssi) {
+        int raw = Math.max(0, Math.min(15, receiveRssi));
+        return Math.min(RSSI_SCALE_MAX, Math.round(raw * (RSSI_SCALE_MAX / 15.0f)));
+    }
+
+    private void applyReceiveRssiFillWidth(int scaleLevel) {
+        if (receiveRssiMeterFrame == null || receiveRssiFillGreen == null
+                || receiveRssiFillRed == null) {
+            return;
+        }
+        int trackWidth = receiveRssiMeterFrame.getWidth();
+        if (trackWidth <= 0) {
+            return;
+        }
+        int clamped = Math.max(0, Math.min(RSSI_SCALE_MAX, scaleLevel));
+        int ninePx = scalePositionPx(trackWidth, 9);
+        int totalPx = clamped == 0
+                ? 0
+                : Math.max(2, scalePositionPx(trackWidth, clamped));
+
+        int greenWidth = clamped <= 9 ? totalPx : ninePx;
+        android.widget.FrameLayout.LayoutParams greenLp =
+                (android.widget.FrameLayout.LayoutParams) receiveRssiFillGreen.getLayoutParams();
+        greenLp.width = greenWidth;
+        greenLp.leftMargin = 0;
+        receiveRssiFillGreen.setLayoutParams(greenLp);
+
+        if (clamped > 9) {
+            int redWidth = Math.max(0, totalPx - ninePx);
+            receiveRssiFillRed.setVisibility(redWidth > 0 ? View.VISIBLE : View.GONE);
+            android.widget.FrameLayout.LayoutParams redLp =
+                    (android.widget.FrameLayout.LayoutParams) receiveRssiFillRed.getLayoutParams();
+            redLp.width = redWidth;
+            redLp.leftMargin = ninePx;
+            redLp.gravity = android.view.Gravity.START | android.view.Gravity.TOP;
+            receiveRssiFillRed.setLayoutParams(redLp);
+        } else {
+            receiveRssiFillRed.setVisibility(View.GONE);
+        }
+    }
+
+    private void ensureReceiveRssiScaleMarks() {
+        if (receiveRssiScaleBuilt || receiveRssiScaleFrame == null) {
+            return;
+        }
+        Context ctx = getMapView().getContext();
+        int tickW = dip(ctx, 1);
+        int tickH = dip(ctx, 6);
+        for (int pos : RSSI_SCALE_TICKS) {
+            View tick = new View(ctx);
+            tick.setTag("tick:" + pos);
+            tick.setBackgroundColor(0xFFAAAAAA);
+            receiveRssiScaleFrame.addView(tick,
+                    new android.widget.FrameLayout.LayoutParams(tickW, tickH));
+        }
+        for (int i = 0; i < RSSI_SCALE_LABELS.length; i++) {
+            TextView label = new TextView(ctx);
+            label.setText(RSSI_SCALE_LABELS[i]);
+            label.setTextColor(0xFFAAAAAA);
+            label.setTextSize(9f);
+            label.setTag("label:" + RSSI_SCALE_LABEL_POS[i]);
+            android.widget.FrameLayout.LayoutParams lp =
+                    new android.widget.FrameLayout.LayoutParams(
+                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = dip(ctx, 8);
+            receiveRssiScaleFrame.addView(label, lp);
+        }
+        receiveRssiScaleBuilt = true;
+    }
+
+    private void layoutReceiveRssiScale() {
+        if (receiveRssiScaleFrame == null) {
+            return;
+        }
+        int width = receiveRssiScaleFrame.getWidth();
+        if (width <= 0) {
+            return;
+        }
+        for (int i = 0; i < receiveRssiScaleFrame.getChildCount(); i++) {
+            View child = receiveRssiScaleFrame.getChildAt(i);
+            Object tag = child.getTag();
+            if (!(tag instanceof String)) {
+                continue;
+            }
+            String tagStr = (String) tag;
+            if (tagStr.startsWith("tick:")) {
+                int pos = Integer.parseInt(tagStr.substring(5));
+                android.widget.FrameLayout.LayoutParams lp =
+                        (android.widget.FrameLayout.LayoutParams) child.getLayoutParams();
+                int tickW = lp.width > 0 ? lp.width : 1;
+                int x = scalePositionPx(width, pos) - tickW / 2;
+                lp.leftMargin = Math.min(Math.max(0, width - tickW), Math.max(0, x));
+                lp.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+                child.setLayoutParams(lp);
+            } else if (tagStr.startsWith("label:")) {
+                int pos = Integer.parseInt(tagStr.substring(6));
+                int xCenter = scalePositionPx(width, pos);
+                int measuredW = child.getWidth();
+                if (measuredW <= 0) {
+                    child.measure(
+                            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.AT_MOST),
+                            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                    measuredW = child.getMeasuredWidth();
+                }
+                android.widget.FrameLayout.LayoutParams lp =
+                        (android.widget.FrameLayout.LayoutParams) child.getLayoutParams();
+                lp.leftMargin = Math.max(0, xCenter - measuredW / 2);
+                lp.gravity = android.view.Gravity.TOP | android.view.Gravity.START;
+                child.setLayoutParams(lp);
+            }
+        }
+    }
+
+    private static int scalePositionPx(int trackWidth, int scaleMark) {
+        int clamped = Math.max(0, Math.min(RSSI_SCALE_MAX, scaleMark));
+        return (int) (trackWidth * (clamped / (float) RSSI_SCALE_MAX));
     }
 
     private void updateStatusFields() {
@@ -1003,6 +1168,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
                 switchDigitalEdit.setChecked(false);
             }
             updateVfoButtons(-1, -1, -1, false, false, false);
+            updateReceiveRssiUi(-1);
             return;
         }
         lastSnapshot = snapshot;
@@ -1041,6 +1207,7 @@ public class UVProDropDownReceiver extends DropDownReceiver
         lastHasRxFocus = snapshot.currentChannelId >= 0;
         updateVfoButtons(snapshot.channelA, snapshot.channelB, snapshot.digitalChannelId,
                 snapshot.dualWatchEnabled, txVfoB, snapshot.currentChannelId >= 0);
+        updateReceiveRssiUi(snapshot.receiveRssi);
 
         for (UVProRadioControlManager.ChannelSummary channel : snapshot.channels) {
             if (channel == null) {
